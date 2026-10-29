@@ -1,0 +1,529 @@
+-- =====================================================
+-- HIDRO SMART v3 — 04 TRIGGERS Y PROCEDIMIENTOS
+-- Ejecutar DESPUÉS de 01_tablas.sql y 03_roles_accesos.sql
+-- =====================================================
+--
+-- ¿Qué es un trigger?
+--   Una función que PostgreSQL ejecuta AUTOMÁTICAMENTE cuando
+--   ocurre un evento en una tabla (INSERT, UPDATE, DELETE).
+--   No hay que llamarla desde el código; la BD la invoca sola.
+--
+-- ¿Qué es un stored procedure?
+--   Una función guardada en la BD que encapsula lógica compleja.
+--   Se llama con CALL nombre_procedure(...).
+--   Ventaja: la lógica vive en la BD, no en el backend;
+--   si el backend cambia de lenguaje, la lógica sigue igual.
+-- =====================================================
+
+
+-- =====================================================
+-- BLOQUE 1: TRIGGERS DE AUDITORÍA
+-- =====================================================
+
+-- ── Auditoría de usuarios ────────────────────────────
+-- Se ejecuta AFTER INSERT/UPDATE/DELETE en la tabla usuarios.
+-- Registra en auditoria quién hizo qué y cuándo.
+-- TG_OP: variable especial de PG que vale 'INSERT', 'UPDATE' o 'DELETE'.
+-- NEW: fila nueva (disponible en INSERT y UPDATE).
+-- OLD: fila anterior (disponible en UPDATE y DELETE).
+-- inet_client_addr(): IP del cliente que hizo la operación.
+-- current_setting('app.aplicacion', TRUE): el backend debe setear
+-- esta variable al conectarse, ej: SET app.aplicacion = 'HidroSmart-Web'.
+CREATE OR REPLACE FUNCTION fn_auditar_usuarios() RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO auditoria (
+        usuario_id, accion, tabla_afectada,
+        registro_id, descripcion, ip_origen, aplicacion
+    ) VALUES (
+        CASE TG_OP WHEN 'DELETE' THEN OLD.usuario_id ELSE NEW.usuario_id END,
+        TG_OP,
+        'usuarios',
+        CASE TG_OP WHEN 'DELETE' THEN OLD.usuario_id ELSE NEW.usuario_id END,
+        'Usuario ' || TG_OP || ' — nombre_usuario: ' ||
+            CASE TG_OP WHEN 'DELETE' THEN OLD.nombre_usuario ELSE NEW.nombre_usuario END,
+        inet_client_addr()::text,
+        current_setting('app.aplicacion', TRUE)
+    );
+    -- RETURN NEW/OLD es obligatorio en triggers AFTER FOR EACH ROW.
+    -- El valor retornado no afecta nada en triggers AFTER,
+    -- pero PG lo exige para no lanzar un error.
+    RETURN CASE TG_OP WHEN 'DELETE' THEN OLD ELSE NEW END;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE TRIGGER tr_auditoria_usuarios
+AFTER INSERT OR UPDATE OR DELETE ON usuarios
+FOR EACH ROW EXECUTE FUNCTION fn_auditar_usuarios();
+
+-- ── Auditoría de medidores ───────────────────────────
+-- Igual que el anterior pero sobre la tabla medidores.
+-- COALESCE: devuelve el primer valor no nulo.
+-- En DELETE, NEW es NULL; en INSERT, OLD es NULL.
+-- COALESCE(NEW.usuario_id, OLD.usuario_id) cubre ambos casos.
+CREATE OR REPLACE FUNCTION fn_auditar_medidores() RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO auditoria (
+        usuario_id, accion, tabla_afectada,
+        registro_id, descripcion, aplicacion
+    ) VALUES (
+        COALESCE(NEW.usuario_id, OLD.usuario_id),
+        TG_OP,
+        'medidores',
+        COALESCE(NEW.medidor_id, OLD.medidor_id),
+        'Medidor ' || TG_OP || ' — código: ' ||
+            COALESCE(NEW.codigo_medidor, OLD.codigo_medidor),
+        current_setting('app.aplicacion', TRUE)
+    );
+    RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE TRIGGER tr_auditoria_medidores
+AFTER INSERT OR UPDATE OR DELETE ON medidores
+FOR EACH ROW EXECUTE FUNCTION fn_auditar_medidores();
+
+-- ── Auditoría de cambios de estado de usuario ────────
+-- Registra cada vez que un admin cambia el estado de un usuario.
+-- Solo se dispara si la columna 'estado' realmente cambió
+-- (OF estado evita disparos por cambios en otras columnas).
+CREATE OR REPLACE FUNCTION fn_auditar_estado_usuario() RETURNS TRIGGER AS $$
+BEGIN
+    IF OLD.estado IS DISTINCT FROM NEW.estado THEN
+        INSERT INTO auditoria (
+            usuario_id, accion, tabla_afectada,
+            registro_id, descripcion, ip_origen, aplicacion
+        ) VALUES (
+            NEW.cambiado_por,
+            'CAMBIO_ESTADO',
+            'estado_usuario',
+            NEW.usuario_id,
+            'Estado cambiado de ' || COALESCE(OLD.estado,'—') ||
+            ' a ' || NEW.estado ||
+            CASE WHEN NEW.motivo_cambio IS NOT NULL
+                 THEN ' — Motivo: ' || NEW.motivo_cambio
+                 ELSE '' END,
+            inet_client_addr()::text,
+            current_setting('app.aplicacion', TRUE)
+        );
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE TRIGGER tr_auditoria_estado_usuario
+AFTER UPDATE OF estado ON estado_usuario
+FOR EACH ROW EXECUTE FUNCTION fn_auditar_estado_usuario();
+
+
+-- =====================================================
+-- BLOQUE 2: TRIGGER DE BLOQUEO AUTOMÁTICO
+-- =====================================================
+
+-- Se ejecuta BEFORE UPDATE en estado_credencial cada vez que
+-- intentos_fallidos cambia. Si supera el límite de la política,
+-- bloquea la cuenta automáticamente.
+--
+-- BEFORE (no AFTER): el trigger puede modificar NEW antes de que
+-- se guarde en la tabla. Si fuera AFTER, ya estaría guardado
+-- y tendríamos que hacer un UPDATE adicional.
+--
+-- v_max_intentos, v_minutos: variables locales del procedimiento.
+-- DECLARE crea el bloque de variables en PL/pgSQL.
+CREATE OR REPLACE FUNCTION fn_verificar_bloqueo() RETURNS TRIGGER AS $$
+DECLARE
+    v_max_intentos INTEGER;
+    v_minutos      INTEGER;
+BEGIN
+    -- Leemos la política activa del usuario
+    SELECT p.bloqueo_intentos, p.bloqueo_minutos
+    INTO   v_max_intentos, v_minutos
+    FROM   credenciales_locales cl
+    JOIN   politicas_contrasenas p ON p.politica_id = cl.politica_id
+    WHERE  cl.usuario_id = NEW.usuario_id;
+
+    -- Si llegó al límite de intentos, calculamos hasta cuándo
+    IF NEW.intentos_fallidos >= v_max_intentos THEN
+
+        -- INTERVAL: tipo de dato de PG para duraciones de tiempo.
+        -- El || concatena el número al texto para construir '30 minutes'.
+        NEW.bloqueado_hasta := CURRENT_TIMESTAMP + (v_minutos || ' minutes')::INTERVAL;
+
+        -- Bloqueamos el usuario en su tabla de estado
+        UPDATE estado_usuario
+        SET    estado = 'Bloqueado',
+               motivo_cambio = 'Bloqueo automático por intentos fallidos',
+               fecha_cambio  = CURRENT_TIMESTAMP
+        WHERE  usuario_id = NEW.usuario_id;
+
+        -- Registramos el evento en el log de errores
+        INSERT INTO log_errores (usuario_id, tipo_error, descripcion, severidad)
+        VALUES (
+            NEW.usuario_id,
+            'Bloqueo automático',
+            'Cuenta bloqueada tras ' || NEW.intentos_fallidos || ' intentos fallidos',
+            'WARN'
+        );
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER tr_bloqueo_credenciales
+BEFORE UPDATE OF intentos_fallidos ON estado_credencial
+FOR EACH ROW EXECUTE FUNCTION fn_verificar_bloqueo();
+
+
+-- =====================================================
+-- BLOQUE 3: TRIGGER DE CIERRE DE SESIONES HUÉRFANAS
+-- =====================================================
+
+-- Cuando un token pasa a estado 'Revocado' o 'Expirado',
+-- cierra automáticamente todas las sesiones que lo usaban.
+-- Esto evita que un atacante con un token robado mantenga
+-- una sesión activa después de que el token fue revocado.
+CREATE OR REPLACE FUNCTION fn_cerrar_sesiones_token_revocado() RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.estado IN ('Revocado', 'Expirado') AND OLD.estado = 'Activo' THEN
+        UPDATE sesion_usuario
+        SET    estado_sesion = 'Cerrado',
+               fecha_fin     = CURRENT_TIMESTAMP
+        WHERE  token_id   = NEW.token_id
+          AND  estado_sesion = 'Activo';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE TRIGGER tr_cerrar_sesion_token
+AFTER UPDATE OF estado ON tokens
+FOR EACH ROW EXECUTE FUNCTION fn_cerrar_sesiones_token_revocado();
+
+
+-- =====================================================
+-- BLOQUE 4: STORED PROCEDURE — LOGIN SEGURO
+-- =====================================================
+--
+-- PROCEDURE (no FUNCTION): puede hacer COMMIT/ROLLBACK internamente.
+-- Se llama con CALL sp_login_usuario('carlos', 'Carlos2026!');
+--
+-- Flujo del login:
+--   1. Busca el usuario por nombre_usuario.
+--   2. Verifica que no esté suspendido ni bloqueado.
+--   3. Calcula el hash de la contraseña ingresada.
+--   4. Compara con el hash guardado.
+--   5a. Si coincide: resetea intentos, actualiza último acceso, registra en auditoría.
+--   5b. Si no coincide: incrementa intentos (dispara el trigger de bloqueo si aplica).
+--
+-- RAISE EXCEPTION: detiene la ejecución y devuelve un error al cliente.
+-- RAISE NOTICE:    envía un mensaje informativo sin detener la ejecución.
+-- ─────────────────────────────────────────────────────
+CREATE OR REPLACE PROCEDURE sp_login_usuario(
+    p_nombre_usuario VARCHAR,
+    p_contrasena     VARCHAR,
+    p_aplicacion     VARCHAR DEFAULT 'HidroSmart-App'
+)
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_usuario_id  INTEGER;
+    v_salt        VARCHAR(100);
+    v_hash        VARCHAR(255);
+    v_bloqueado   TIMESTAMPTZ;
+    v_estado      VARCHAR(20);
+    v_tipo_auth   VARCHAR(20);
+    v_input_hash  TEXT;
+BEGIN
+    -- Paso 1: buscar el usuario y sus credenciales en una sola consulta
+    -- JOIN encadena las tablas relacionadas por su FK.
+    -- Si el usuario no existe, NOT FOUND será TRUE.
+    SELECT
+        u.usuario_id,
+        cl.salt,
+        cl.contrasena_hash,
+        ec.bloqueado_hasta,
+        eu.estado,
+        u.tipo_autenticacion
+    INTO
+        v_usuario_id, v_salt, v_hash,
+        v_bloqueado, v_estado, v_tipo_auth
+    FROM usuarios u
+    JOIN credenciales_locales cl ON cl.usuario_id = u.usuario_id
+    JOIN estado_credencial    ec ON ec.usuario_id = u.usuario_id
+    JOIN estado_usuario       eu ON eu.usuario_id = u.usuario_id
+    WHERE u.nombre_usuario = p_nombre_usuario;
+
+    -- Paso 2a: si no existe el usuario, no revelamos si es usuario o contraseña
+    -- (mensaje genérico para no dar pistas a atacantes)
+    IF NOT FOUND THEN
+        INSERT INTO log_errores (tipo_error, descripcion, severidad)
+        VALUES ('Usuario no encontrado',
+                'Intento de login con usuario inexistente: ' || p_nombre_usuario,
+                'WARN');
+        RAISE EXCEPTION 'Credenciales inválidas';
+    END IF;
+
+    -- Paso 2b: cuenta suspendida por un administrador
+    IF v_estado = 'Suspendido' THEN
+        RAISE EXCEPTION 'Cuenta suspendida. Contacte al administrador';
+    END IF;
+
+    -- Paso 2c: cuenta bloqueada por intentos fallidos
+    -- CURRENT_TIMESTAMP: fecha y hora exacta en este momento (con zona horaria)
+    IF v_bloqueado IS NOT NULL AND v_bloqueado > CURRENT_TIMESTAMP THEN
+        RAISE EXCEPTION 'Cuenta bloqueada hasta %', v_bloqueado;
+    END IF;
+
+    -- Si el bloqueo ya venció, lo limpiamos
+    IF v_bloqueado IS NOT NULL AND v_bloqueado <= CURRENT_TIMESTAMP THEN
+        UPDATE estado_credencial
+        SET    bloqueado_hasta = NULL, intentos_fallidos = 0
+        WHERE  usuario_id = v_usuario_id;
+
+        UPDATE estado_usuario
+        SET    estado = 'Activo', motivo_cambio = 'Desbloqueo automático por vencimiento'
+        WHERE  usuario_id = v_usuario_id;
+    END IF;
+
+    -- Paso 3: calcular hash de la contraseña ingresada
+    -- SHA-512 es un algoritmo de hash criptográfico: genera una huella
+    -- de 512 bits que no puede revertirse a la contraseña original.
+    -- Mezclamos el salt antes de hashear para que dos usuarios con la
+    -- misma contraseña tengan hashes distintos.
+    v_input_hash := encode(digest(v_salt || p_contrasena, 'sha512'), 'hex');
+
+    -- Paso 4 y 5: comparar hashes
+    IF v_input_hash = v_hash THEN
+
+        -- ── Login exitoso ──────────────────────────────
+        -- Resetear contador de intentos
+        UPDATE estado_credencial
+        SET    intentos_fallidos = 0,
+               bloqueado_hasta   = NULL,
+               ultimo_intento    = CURRENT_TIMESTAMP
+        WHERE  usuario_id = v_usuario_id;
+
+        -- Actualizar último acceso
+        UPDATE estado_usuario
+        SET    ultimo_acceso = CURRENT_TIMESTAMP,
+               estado        = 'Activo'
+        WHERE  usuario_id = v_usuario_id;
+
+        -- Registrar en auditoría
+        INSERT INTO auditoria (usuario_id, accion, descripcion, ip_origen, aplicacion)
+        VALUES (v_usuario_id, 'LOGIN', 'Inicio de sesión exitoso',
+                inet_client_addr()::text, p_aplicacion);
+
+        RAISE NOTICE 'Login OK — usuario_id=% tipo_auth=%', v_usuario_id, v_tipo_auth;
+
+    ELSE
+
+        -- ── Login fallido ──────────────────────────────
+        -- Incrementar intentos (esto disparará tr_bloqueo_credenciales
+        -- si se supera el límite definido en politicas_contrasenas)
+        UPDATE estado_credencial
+        SET    intentos_fallidos = intentos_fallidos + 1,
+               ultimo_intento    = CURRENT_TIMESTAMP
+        WHERE  usuario_id = v_usuario_id;
+
+        INSERT INTO log_errores (usuario_id, tipo_error, descripcion, ip_origen, severidad)
+        VALUES (v_usuario_id, 'Contraseña incorrecta',
+                'Intento fallido desde aplicación: ' || p_aplicacion,
+                inet_client_addr()::text, 'WARN');
+
+        RAISE EXCEPTION 'Credenciales inválidas';
+
+    END IF;
+END;
+$$;
+
+
+-- =====================================================
+-- BLOQUE 5: STORED PROCEDURE — CAMBIO DE CONTRASEÑA
+-- =====================================================
+--
+-- Valida la contraseña actual, aplica las reglas de la política
+-- (longitud mínima, mayúsculas, números, símbolos) y guarda el nuevo hash.
+--
+-- regexp_match: busca un patrón de expresión regular en un texto.
+--   '[A-Z]'   → al menos una letra mayúscula
+--   '[0-9]'   → al menos un número
+--   '[^a-zA-Z0-9]' → al menos un carácter que NO sea letra ni número (símbolo)
+-- Si regexp_match no encuentra nada, devuelve NULL.
+-- ─────────────────────────────────────────────────────
+CREATE OR REPLACE PROCEDURE sp_cambiar_contrasena(
+    p_usuario_id     INTEGER,
+    p_contrasena_old VARCHAR,
+    p_contrasena_new VARCHAR
+)
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_salt       VARCHAR(100);
+    v_hash_old   VARCHAR(255);
+    v_salt_new   VARCHAR(100);
+    v_min_long   INTEGER;
+    v_max_long   INTEGER;
+    v_mayusculas BOOLEAN;
+    v_numeros    BOOLEAN;
+    v_simbolos   BOOLEAN;
+BEGIN
+    -- Verificar contraseña actual
+    SELECT salt, contrasena_hash
+    INTO   v_salt, v_hash_old
+    FROM   credenciales_locales
+    WHERE  usuario_id = p_usuario_id;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Usuario no tiene credenciales locales';
+    END IF;
+
+    IF encode(digest(v_salt || p_contrasena_old, 'sha512'), 'hex') <> v_hash_old THEN
+        RAISE EXCEPTION 'La contraseña actual es incorrecta';
+    END IF;
+
+    -- Leer política de contraseñas del usuario
+    SELECT p.min_longitud, p.max_longitud,
+           p.requiere_mayusculas, p.requiere_numeros, p.requiere_simbolos
+    INTO   v_min_long, v_max_long, v_mayusculas, v_numeros, v_simbolos
+    FROM   credenciales_locales cl
+    JOIN   politicas_contrasenas p ON p.politica_id = cl.politica_id
+    WHERE  cl.usuario_id = p_usuario_id;
+
+    -- Validar longitud
+    IF length(p_contrasena_new) < v_min_long THEN
+        RAISE EXCEPTION 'La contraseña debe tener al menos % caracteres', v_min_long;
+    END IF;
+    IF length(p_contrasena_new) > v_max_long THEN
+        RAISE EXCEPTION 'La contraseña no puede tener más de % caracteres', v_max_long;
+    END IF;
+
+    -- Validar reglas de complejidad
+    IF v_mayusculas AND regexp_match(p_contrasena_new, '[A-Z]') IS NULL THEN
+        RAISE EXCEPTION 'La contraseña debe contener al menos una letra mayúscula';
+    END IF;
+    IF v_numeros AND regexp_match(p_contrasena_new, '[0-9]') IS NULL THEN
+        RAISE EXCEPTION 'La contraseña debe contener al menos un número';
+    END IF;
+    IF v_simbolos AND regexp_match(p_contrasena_new, '[^a-zA-Z0-9]') IS NULL THEN
+        RAISE EXCEPTION 'La contraseña debe contener al menos un símbolo';
+    END IF;
+
+    -- Generar nuevo salt y hash
+    -- gen_random_uuid() genera un UUID aleatorio como nuevo salt
+    v_salt_new := gen_random_uuid()::text;
+
+    UPDATE credenciales_locales
+    SET    salt               = v_salt_new,
+           contrasena_hash    = encode(digest(v_salt_new || p_contrasena_new, 'sha512'), 'hex'),
+           ultima_cambio_pass = CURRENT_TIMESTAMP
+    WHERE  usuario_id = p_usuario_id;
+
+    -- Revocar todos los tokens activos (fuerza nuevo login)
+    UPDATE tokens
+    SET    estado = 'Revocado'
+    WHERE  usuario_id = p_usuario_id
+      AND  estado     = 'Activo';
+
+    INSERT INTO auditoria (usuario_id, accion, tabla_afectada, descripcion, aplicacion)
+    VALUES (p_usuario_id, 'CAMBIO_CONTRASENA', 'credenciales_locales',
+            'Contraseña actualizada correctamente',
+            current_setting('app.aplicacion', TRUE));
+
+    RAISE NOTICE 'Contraseña cambiada exitosamente para usuario_id=%', p_usuario_id;
+END;
+$$;
+
+
+-- =====================================================
+-- BLOQUE 6: STORED PROCEDURE — REGISTRAR LECTURA
+-- =====================================================
+--
+-- Inserta una lectura de consumo y calcula automáticamente
+-- el costo usando la tarifa vigente del hogar.
+-- Lanza una alerta si el consumo supera el tope configurado.
+-- ─────────────────────────────────────────────────────
+CREATE OR REPLACE PROCEDURE sp_registrar_lectura(
+    p_medidor_id         INTEGER,
+    p_cantidad_consumida DECIMAL(10,4),
+    p_actividad          VARCHAR DEFAULT 'General',
+    p_flujo              DECIMAL(8,4) DEFAULT NULL
+)
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_lectura_id  INTEGER;
+    v_hogar_id    INTEGER;
+    v_valor_m3    DECIMAL(12,4);
+    v_costo       DECIMAL(10,2);
+    v_tope        DECIMAL(10,2);
+    v_consumo_mes DECIMAL(10,4);
+    v_regla       RECORD;
+BEGIN
+    -- Insertar la lectura cruda
+    INSERT INTO consumo_lectura (medidor_id, fecha_lectura, cantidad_consumida, actividad, flujo)
+    VALUES (p_medidor_id, CURRENT_TIMESTAMP, p_cantidad_consumida, p_actividad, p_flujo)
+    RETURNING lectura_id INTO v_lectura_id;
+
+    -- Obtener el hogar del medidor y la tarifa vigente
+    SELECT m.hogar_id, ht.valor_m3
+    INTO   v_hogar_id, v_valor_m3
+    FROM   medidores m
+    LEFT JOIN hogar_tarifa ht
+           ON ht.hogar_id = m.hogar_id
+          AND ht.vigente_desde <= CURRENT_DATE
+          AND (ht.vigente_hasta IS NULL OR ht.vigente_hasta >= CURRENT_DATE)
+    WHERE  m.medidor_id = p_medidor_id;
+
+    -- Calcular costo (si hay tarifa disponible)
+    IF v_valor_m3 IS NOT NULL THEN
+        v_costo := p_cantidad_consumida * v_valor_m3;
+
+        INSERT INTO consumo_metrica (lectura_id, costo_calculado, tarifa_aplicada)
+        VALUES (v_lectura_id, v_costo, v_valor_m3);
+    END IF;
+
+    -- Revisar si alguna regla de alerta fue superada
+    -- FOR ... IN SELECT: iteramos sobre todas las reglas activas del hogar
+    FOR v_regla IN
+        SELECT * FROM reglas_alerta
+        WHERE  hogar_id = v_hogar_id
+          AND  medidor_id = p_medidor_id
+          AND  activa = TRUE
+    LOOP
+        -- Calcular consumo del mes actual para este medidor
+        SELECT COALESCE(SUM(cantidad_consumida), 0)
+        INTO   v_consumo_mes
+        FROM   consumo_lectura
+        WHERE  medidor_id   = p_medidor_id
+          AND  date_trunc('month', fecha_lectura) = date_trunc('month', CURRENT_TIMESTAMP);
+
+        -- Si superó el umbral, generar evento de alerta
+        IF v_consumo_mes >= v_regla.umbral THEN
+            INSERT INTO eventos_alerta (regla_id, usuario_id, mensaje)
+            VALUES (
+                v_regla.regla_id,
+                v_regla.usuario_id,
+                'Consumo del mes: ' || round(v_consumo_mes, 2) || ' m³ — Límite: ' ||
+                v_regla.umbral || ' m³'
+            );
+        END IF;
+    END LOOP;
+
+    RAISE NOTICE 'Lectura registrada — lectura_id=% costo=%', v_lectura_id, v_costo;
+END;
+$$;
+
+
+-- =====================================================
+-- EJEMPLOS DE USO (descomenta para probar)
+-- =====================================================
+
+-- Login:
+-- CALL sp_login_usuario('admin',   'Admin2026!',   'HidroSmart-Admin');
+-- CALL sp_login_usuario('soporte', 'Soporte2026!', 'HidroSmart-Panel');
+-- CALL sp_login_usuario('carlos',  'Carlos2026!',  'HidroSmart-App');
+
+-- Cambio de contraseña:
+-- CALL sp_cambiar_contrasena(3, 'Carlos2026!', 'NuevaClave2026#');
+
+-- Registrar lectura de consumo:
+-- SET app.usuario_id = 3;
+-- CALL sp_registrar_lectura(1, 0.350, 'Ducha', 8.5);

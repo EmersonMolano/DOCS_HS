@@ -1,0 +1,134 @@
+-- 4. Generar código de la Base de Datos:-------------------------
+
+CREATE DATABASE TechFix;
+GO
+USE TechFix;
+GO
+
+CREATE TABLE Cliente (
+    ClienteID INT PRIMARY KEY IDENTITY,
+    Nombre NVARCHAR(100),
+    Apellido NVARCHAR(100),
+    Telefono NVARCHAR(15),
+    Correo NVARCHAR(100)
+);
+
+CREATE TABLE Equipo (
+    EquipoID INT PRIMARY KEY IDENTITY,
+    TipoEquipo NVARCHAR(50),
+    Marca NVARCHAR(50),
+    Modelo NVARCHAR(50),
+    ClienteID INT FOREIGN KEY REFERENCES Cliente(ClienteID)
+);
+
+CREATE TABLE Tecnico (
+    TecnicoID INT PRIMARY KEY IDENTITY,
+    Nombre NVARCHAR(100),
+    Especialidad NVARCHAR(50),
+    Telefono NVARCHAR(15)
+);
+
+CREATE TABLE Reparacion (
+    ReparacionID INT PRIMARY KEY IDENTITY,
+    FechaEntrada DATE,
+    FechaSalida DATE,
+    Estado NVARCHAR(50),
+    Costo DECIMAL(10,2),
+    EquipoID INT FOREIGN KEY REFERENCES Equipo(EquipoID),
+    TecnicoID INT FOREIGN KEY REFERENCES Tecnico(TecnicoID)
+);
+
+CREATE TABLE Factura (
+    FacturaID INT PRIMARY KEY IDENTITY,
+    FechaFactura DATE,
+    Total DECIMAL(10,2),
+    ClienteID INT FOREIGN KEY REFERENCES Cliente(ClienteID),
+    ReparacionID INT FOREIGN KEY REFERENCES Reparacion(ReparacionID)
+);
+
+-- 5. Insertar registros según corresponda:------------------------------
+
+INSERT INTO Cliente VALUES ('Juan', 'Gomez', '3105551234', 'juan@gmail.com');
+INSERT INTO Cliente VALUES ('Maria', 'Lopez', '3206667890', 'maria@gmail.com');
+
+INSERT INTO Equipo VALUES ('Portátil', 'HP', 'Pavilion', 1);
+INSERT INTO Equipo VALUES ('Celular', 'Samsung', 'A54', 2);
+
+INSERT INTO Tecnico VALUES ('Carlos Ruiz', 'Hardware', '3101234567');
+INSERT INTO Tecnico VALUES ('Ana Torres', 'Software', '3209876543');
+
+INSERT INTO Reparacion VALUES ('2025-10-01', '2025-10-05', 'Completada', 250000, 1, 1);
+INSERT INTO Reparacion VALUES ('2025-10-02', '2025-10-06', 'En proceso', 180000, 2, 2);
+
+INSERT INTO Factura VALUES ('2025-10-05', 250000, 1, 1);
+INSERT INTO Factura VALUES ('2025-10-06', 180000, 2, 2);
+
+-- 6. Generar las siguientes consultas, vistas, procedimientos y Triggers (Disparadores):--------------------------------
+
+SELECT Nombre, Apellido, Telefono FROM Cliente;
+SELECT TipoEquipo, Marca FROM Equipo;
+SELECT COUNT(*) AS TotalTecnicos FROM Tecnico;
+SELECT AVG(Costo) AS PromedioCosto FROM Reparacion;
+SELECT MAX(Total) AS MayorFactura FROM Factura;
+
+
+SELECT C.Nombre, E.TipoEquipo, R.Estado
+FROM Cliente C
+JOIN Equipo E ON C.ClienteID = E.ClienteID
+JOIN Reparacion R ON E.EquipoID = R.EquipoID;
+
+SELECT C.Nombre, R.Costo, F.Total
+FROM Cliente C
+JOIN Reparacion R ON C.ClienteID = F.ClienteID
+JOIN Factura F ON R.ReparacionID = F.ReparacionID;
+
+SELECT * FROM Reparacion WHERE Estado = 'Completada';
+SELECT * FROM Factura WHERE Total > 200000;
+SELECT * FROM Cliente WHERE Nombre LIKE 'M%';
+SELECT * FROM Equipo WHERE Marca = 'HP';
+SELECT * FROM Tecnico WHERE Especialidad = 'Software';
+
+SELECT C.Nombre, E.Marca, R.Estado, F.Total
+FROM Cliente C
+JOIN Equipo E ON C.ClienteID = E.ClienteID
+JOIN Reparacion R ON E.EquipoID = R.EquipoID
+JOIN Factura F ON R.ReparacionID = F.ReparacionID
+WHERE F.Total > 200000;
+
+SELECT Nombre FROM Cliente
+WHERE ClienteID IN (
+    SELECT ClienteID FROM Factura WHERE Total > 200000
+);
+
+CREATE VIEW VistaReparacionesCompletadas AS
+SELECT C.Nombre, E.TipoEquipo, R.Estado, R.Costo
+FROM Cliente C
+JOIN Equipo E ON C.ClienteID = E.ClienteID
+JOIN Reparacion R ON E.EquipoID = R.EquipoID
+WHERE R.Estado = 'Completada';
+
+CREATE VIEW VistaFacturas AS
+SELECT F.FacturaID, C.Nombre, F.Total FROM Factura F
+JOIN Cliente C ON F.ClienteID = C.ClienteID;
+
+CREATE PROCEDURE ListarFacturasCliente
+AS
+SELECT C.Nombre, F.FacturaID, F.Total
+FROM Cliente C
+JOIN Factura F ON C.ClienteID = F.ClienteID;
+GO
+
+CREATE TRIGGER trg_AfterInsertFactura
+ON Factura
+AFTER INSERT
+AS
+PRINT('Se ha registrado una nueva factura correctamente.');
+GO
+
+CREATE TRIGGER trg_UpdateReparacion
+ON Reparacion
+AFTER UPDATE
+AS
+PRINT('El estado de una reparación ha sido modificado.');
+GO
+

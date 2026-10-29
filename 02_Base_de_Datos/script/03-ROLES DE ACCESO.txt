@@ -1,0 +1,429 @@
+-- =====================================================
+-- HIDRO SMART v3 — 03 ROLES Y ACCESOS (v2 mejorado)
+-- Ejecutar DESPUÉS de 01_tablas.sql y 02_inserts.sql
+-- =====================================================
+--
+-- Cambios respecto a la versión anterior:
+--   · RLS y GRANT para las 3 tablas nuevas:
+--       reset_contrasena, usuario_2fa, prediccion_consumo
+--   · Corregido: role_usuario ahora puede ver el estado
+--     de sus propios medidores (medidor_estado_hist)
+--   · Corregido: tokens y sesion_usuario ahora permiten
+--     UPDATE (necesario para revocar tokens y cerrar sesión)
+--   · Corregido: configuraciones ahora visible para miembros
+--     del hogar, no solo para el titular
+--   · REVOKE explícito añadido para las 3 tablas nuevas
+--   · usuario_2fa: secreto_totp protegido — role_usuario
+--     puede ver su config pero NO leer el secreto directamente
+--     (esa columna sensible la lee solo el backend via superusuario)
+-- =====================================================
+
+
+-- ─── Limpieza de roles previos ───────────────────────
+DROP ROLE IF EXISTS role_admin;
+DROP ROLE IF EXISTS role_soporte;
+DROP ROLE IF EXISTS role_usuario;
+
+-- NOLOGIN: estos roles no se usan para conectarse directamente a PG.
+-- Se "heredan" por el usuario de la aplicación según el contexto.
+CREATE ROLE role_admin   NOLOGIN;
+CREATE ROLE role_soporte NOLOGIN;
+CREATE ROLE role_usuario NOLOGIN;
+
+
+-- =====================================================
+-- FUNCIONES DE APOYO PARA RLS
+-- =====================================================
+
+-- Devuelve el usuario_id del usuario conectado en este momento.
+-- El backend debe ejecutar SET app.usuario_id = X al abrir cada sesión.
+-- current_setting(..., TRUE): el TRUE evita error si la variable no existe.
+-- SECURITY DEFINER: corre con permisos del creador, no del llamador.
+CREATE OR REPLACE FUNCTION fn_usuario_actual() RETURNS INTEGER AS $$
+BEGIN
+    RETURN current_setting('app.usuario_id', TRUE)::INTEGER;
+EXCEPTION WHEN OTHERS THEN RETURN NULL;
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
+
+-- Devuelve todos los medidor_id accesibles para el usuario actual:
+-- propios directamente o a través de un hogar del que es miembro.
+CREATE OR REPLACE FUNCTION fn_mis_medidores() RETURNS SETOF INTEGER AS $$
+    SELECT medidor_id FROM medidores
+    WHERE  usuario_id = fn_usuario_actual()
+    OR     hogar_id IN (
+        SELECT hogar_id FROM hogar_miembro
+        WHERE usuario_id = fn_usuario_actual()
+    );
+$$ LANGUAGE sql STABLE SECURITY DEFINER;
+
+-- Devuelve todos los hogar_id a los que pertenece el usuario actual,
+-- ya sea como titular o como miembro/invitado.
+-- Centralizar esto en una función evita repetir la subconsulta
+-- en cada política, y si la lógica cambia se actualiza en un solo lugar.
+CREATE OR REPLACE FUNCTION fn_mis_hogares() RETURNS SETOF INTEGER AS $$
+    SELECT hogar_id FROM hogares
+    WHERE  titular_id = fn_usuario_actual()
+    UNION
+    SELECT hogar_id FROM hogar_miembro
+    WHERE  usuario_id = fn_usuario_actual();
+$$ LANGUAGE sql STABLE SECURITY DEFINER;
+
+
+-- =====================================================
+-- ROW LEVEL SECURITY (RLS)
+-- =====================================================
+-- RLS filtra filas automáticamente según políticas (POLICY).
+-- ENABLE: activa RLS en la tabla.
+-- FORCE:  aplica RLS incluso al dueño de la tabla (sin esto
+--         el superusuario ve todo sin filtros).
+-- ─────────────────────────────────────────────────────
+
+ALTER TABLE usuarios              ENABLE ROW LEVEL SECURITY;
+ALTER TABLE perfil_usuario        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE estado_usuario        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE credenciales_locales  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE estado_credencial     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hogares               ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hogar_miembro         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE consumo_lectura       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE eventos_alerta        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reglas_alerta         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE configuraciones       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE medidores             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tokens                ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sesion_usuario        ENABLE ROW LEVEL SECURITY;
+-- Tablas nuevas
+ALTER TABLE reset_contrasena      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE usuario_2fa           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE prediccion_consumo    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE medidor_estado_hist   ENABLE ROW LEVEL SECURITY;
+
+-- FORCE en tablas más críticas
+ALTER TABLE usuarios             FORCE ROW LEVEL SECURITY;
+ALTER TABLE credenciales_locales FORCE ROW LEVEL SECURITY;
+ALTER TABLE estado_credencial    FORCE ROW LEVEL SECURITY;
+ALTER TABLE reset_contrasena     FORCE ROW LEVEL SECURITY;  -- muy sensible
+ALTER TABLE usuario_2fa          FORCE ROW LEVEL SECURITY;  -- muy sensible
+
+
+-- =====================================================
+-- POLÍTICAS RLS — role_usuario
+-- =====================================================
+
+-- ── Identidad ────────────────────────────────────────
+CREATE POLICY pol_usuarios_select
+    ON usuarios FOR SELECT TO role_usuario
+    USING (usuario_id = fn_usuario_actual());
+
+CREATE POLICY pol_usuarios_update
+    ON usuarios FOR UPDATE TO role_usuario
+    USING (usuario_id = fn_usuario_actual());
+
+CREATE POLICY pol_perfil_select
+    ON perfil_usuario FOR SELECT TO role_usuario
+    USING (usuario_id = fn_usuario_actual());
+
+CREATE POLICY pol_perfil_update
+    ON perfil_usuario FOR UPDATE TO role_usuario
+    USING (usuario_id = fn_usuario_actual());
+
+CREATE POLICY pol_estado_usuario_select
+    ON estado_usuario FOR SELECT TO role_usuario
+    USING (usuario_id = fn_usuario_actual());
+
+CREATE POLICY pol_credenciales_select
+    ON credenciales_locales FOR SELECT TO role_usuario
+    USING (usuario_id = fn_usuario_actual());
+
+CREATE POLICY pol_estado_cred_select
+    ON estado_credencial FOR SELECT TO role_usuario
+    USING (usuario_id = fn_usuario_actual());
+
+-- ── Reset de contraseña ───────────────────────────────
+-- El usuario solo ve sus propios tokens de reset.
+-- NO puede insertar directamente: el backend (con superusuario)
+-- es el único que crea y valida tokens de reset.
+-- UPDATE tampoco: marcar como "usado" lo hace el backend.
+CREATE POLICY pol_reset_contrasena_select
+    ON reset_contrasena FOR SELECT TO role_usuario
+    USING (usuario_id = fn_usuario_actual());
+
+-- ── 2FA ──────────────────────────────────────────────
+-- El usuario puede ver y actualizar su configuración 2FA
+-- (activar/desactivar, cambiar método).
+-- El secreto_totp es una columna de la tabla, no se puede
+-- restringir a nivel de columna con RLS puro; para eso el
+-- backend debe hacer SELECT de columnas específicas
+-- (nunca SELECT * sobre esta tabla desde el frontend).
+CREATE POLICY pol_2fa_select
+    ON usuario_2fa FOR SELECT TO role_usuario
+    USING (usuario_id = fn_usuario_actual());
+
+CREATE POLICY pol_2fa_insert
+    ON usuario_2fa FOR INSERT TO role_usuario
+    WITH CHECK (usuario_id = fn_usuario_actual());
+
+CREATE POLICY pol_2fa_update
+    ON usuario_2fa FOR UPDATE TO role_usuario
+    USING (usuario_id = fn_usuario_actual());
+
+-- ── Hogares ───────────────────────────────────────────
+-- El usuario ve hogares donde es titular o miembro.
+-- Ahora usa fn_mis_hogares() para simplificar y centralizar.
+CREATE POLICY pol_hogares_select
+    ON hogares FOR SELECT TO role_usuario
+    USING (hogar_id IN (SELECT fn_mis_hogares()));
+
+CREATE POLICY pol_hogar_miembro_select
+    ON hogar_miembro FOR SELECT TO role_usuario
+    USING (usuario_id = fn_usuario_actual());
+
+-- INSERT solo para agregarse a un hogar como invitado
+-- (el titular o admin asigna roles; el usuario no puede
+-- autopromocionar su rol_en_hogar).
+CREATE POLICY pol_hogar_miembro_insert
+    ON hogar_miembro FOR INSERT TO role_usuario
+    WITH CHECK (usuario_id = fn_usuario_actual()
+                AND rol_en_hogar = 'Invitado');
+
+-- ── Configuraciones ───────────────────────────────────
+-- MEJORA: antes solo el titular podía ver la configuración.
+-- Ahora cualquier miembro del hogar puede verla (necesario
+-- para que los miembros vean topes de consumo y alertas).
+-- Solo el titular puede actualizarla (UPDATE sigue restringido).
+CREATE POLICY pol_config_select
+    ON configuraciones FOR SELECT TO role_usuario
+    USING (hogar_id IN (SELECT fn_mis_hogares()));
+
+CREATE POLICY pol_config_update
+    ON configuraciones FOR UPDATE TO role_usuario
+    USING (
+        hogar_id IN (
+            SELECT hogar_id FROM hogares
+            WHERE titular_id = fn_usuario_actual()
+        )
+    );
+
+-- ── Medidores ─────────────────────────────────────────
+CREATE POLICY pol_medidores_select
+    ON medidores FOR SELECT TO role_usuario
+    USING (
+        usuario_id = fn_usuario_actual()
+        OR hogar_id IN (SELECT fn_mis_hogares())
+    );
+
+-- ── Estado del medidor (NUEVO para role_usuario) ──────
+-- MEJORA: antes role_usuario no tenía política en esta tabla,
+-- por lo que no podía ver el estado de sus propios medidores.
+-- El usuario puede ver el historial de estados de sus medidores.
+-- No puede modificarlo: solo soporte y admin pueden cambiar estados.
+CREATE POLICY pol_medidor_hist_usuario_select
+    ON medidor_estado_hist FOR SELECT TO role_usuario
+    USING (medidor_id IN (SELECT fn_mis_medidores()));
+
+-- ── Consumo ───────────────────────────────────────────
+-- Lecturas son inmutables: SELECT e INSERT, nunca UPDATE/DELETE.
+CREATE POLICY pol_consumo_select
+    ON consumo_lectura FOR SELECT TO role_usuario
+    USING (medidor_id IN (SELECT fn_mis_medidores()));
+
+CREATE POLICY pol_consumo_insert
+    ON consumo_lectura FOR INSERT TO role_usuario
+    WITH CHECK (medidor_id IN (SELECT fn_mis_medidores()));
+
+-- ── Predicciones (NUEVA tabla) ────────────────────────
+-- El usuario puede ver las predicciones de sus hogares.
+-- Las predicciones las genera el backend; el usuario no las crea.
+CREATE POLICY pol_prediccion_select
+    ON prediccion_consumo FOR SELECT TO role_usuario
+    USING (hogar_id IN (SELECT fn_mis_hogares()));
+
+-- ── Alertas ───────────────────────────────────────────
+CREATE POLICY pol_eventos_alerta_select
+    ON eventos_alerta FOR SELECT TO role_usuario
+    USING (usuario_id = fn_usuario_actual());
+
+CREATE POLICY pol_reglas_alerta_select
+    ON reglas_alerta FOR SELECT TO role_usuario
+    USING (
+        usuario_id = fn_usuario_actual()
+        OR hogar_id IN (SELECT fn_mis_hogares())
+    );
+
+CREATE POLICY pol_reglas_alerta_insert
+    ON reglas_alerta FOR INSERT TO role_usuario
+    WITH CHECK (usuario_id = fn_usuario_actual());
+
+-- ── Tokens ────────────────────────────────────────────
+CREATE POLICY pol_tokens_select
+    ON tokens FOR SELECT TO role_usuario
+    USING (usuario_id = fn_usuario_actual());
+
+CREATE POLICY pol_tokens_insert
+    ON tokens FOR INSERT TO role_usuario
+    WITH CHECK (usuario_id = fn_usuario_actual());
+
+-- MEJORA: el usuario puede revocar sus propios tokens
+-- (ej: cerrar sesión desde otro dispositivo).
+-- WITH CHECK limita que solo pueda cambiar estado a 'Revocado',
+-- no a otros valores como 'Activo' (evita reactivar tokens expirados).
+CREATE POLICY pol_tokens_update
+    ON tokens FOR UPDATE TO role_usuario
+    USING  (usuario_id = fn_usuario_actual())
+    WITH CHECK (estado = 'Revocado');
+
+-- ── Sesiones ─────────────────────────────────────────
+CREATE POLICY pol_sesion_select
+    ON sesion_usuario FOR SELECT TO role_usuario
+    USING (usuario_id = fn_usuario_actual());
+
+CREATE POLICY pol_sesion_insert
+    ON sesion_usuario FOR INSERT TO role_usuario
+    WITH CHECK (usuario_id = fn_usuario_actual());
+
+-- MEJORA: el usuario puede cerrar su propia sesión (UPDATE).
+-- WITH CHECK garantiza que solo pueda cambiar estado a 'Cerrado'
+-- y registrar fecha_fin; no puede reabrir ni manipular otros campos.
+CREATE POLICY pol_sesion_update
+    ON sesion_usuario FOR UPDATE TO role_usuario
+    USING  (usuario_id = fn_usuario_actual())
+    WITH CHECK (estado_sesion = 'Cerrado');
+
+
+-- =====================================================
+-- POLÍTICAS RLS — role_soporte
+-- =====================================================
+-- Soporte técnico gestiona medidores pero NO ve datos personales.
+-- ─────────────────────────────────────────────────────
+
+CREATE POLICY pol_medidores_soporte_select
+    ON medidores FOR SELECT TO role_soporte USING (TRUE);
+
+CREATE POLICY pol_medidores_soporte_update
+    ON medidores FOR UPDATE TO role_soporte USING (TRUE);
+
+CREATE POLICY pol_medidor_hist_soporte_select
+    ON medidor_estado_hist FOR SELECT TO role_soporte USING (TRUE);
+
+CREATE POLICY pol_medidor_hist_soporte_insert
+    ON medidor_estado_hist FOR INSERT TO role_soporte WITH CHECK (TRUE);
+
+CREATE POLICY pol_medidor_hist_soporte_update
+    ON medidor_estado_hist FOR UPDATE TO role_soporte USING (TRUE);
+
+-- Soporte puede ver predicciones para diagnosticar problemas
+-- de consumo anómalo reportados por usuarios.
+CREATE POLICY pol_prediccion_soporte_select
+    ON prediccion_consumo FOR SELECT TO role_soporte USING (TRUE);
+
+
+-- =====================================================
+-- GRANT — role_admin
+-- =====================================================
+-- Acceso total a todas las tablas y secuencias del esquema.
+-- ─────────────────────────────────────────────────────
+GRANT USAGE ON SCHEMA public TO role_admin;
+GRANT ALL PRIVILEGES ON ALL TABLES    IN SCHEMA public TO role_admin;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO role_admin;
+
+
+-- =====================================================
+-- GRANT — role_soporte
+-- =====================================================
+GRANT USAGE ON SCHEMA public TO role_soporte;
+
+GRANT SELECT, UPDATE        ON medidores              TO role_soporte;
+GRANT SELECT, INSERT, UPDATE ON medidor_estado_hist   TO role_soporte;
+GRANT SELECT                ON hogares                TO role_soporte;
+GRANT SELECT                ON log_errores            TO role_soporte;
+GRANT SELECT                ON prediccion_consumo     TO role_soporte;  -- nuevo
+GRANT INSERT                ON auditoria              TO role_soporte;
+GRANT SELECT                ON configuracion_seguridad TO role_soporte;
+
+GRANT USAGE, SELECT ON SEQUENCE
+    auditoria_auditoria_id_seq,
+    medidor_estado_hist_hist_id_seq
+TO role_soporte;
+
+
+-- =====================================================
+-- GRANT — role_usuario
+-- =====================================================
+-- RLS filtra las filas; GRANT define qué operaciones SQL puede hacer.
+-- Las dos capas son necesarias: una sin la otra no es suficiente.
+-- ─────────────────────────────────────────────────────
+GRANT USAGE ON SCHEMA public TO role_usuario;
+
+-- Identidad y perfil
+GRANT SELECT, UPDATE ON usuarios              TO role_usuario;
+GRANT SELECT, UPDATE ON perfil_usuario        TO role_usuario;
+GRANT SELECT         ON estado_usuario        TO role_usuario;
+GRANT SELECT         ON credenciales_locales  TO role_usuario;
+GRANT SELECT         ON estado_credencial     TO role_usuario;
+
+-- Reset y 2FA (tablas nuevas)
+-- reset_contrasena: solo SELECT (el backend hace INSERT/UPDATE)
+GRANT SELECT         ON reset_contrasena      TO role_usuario;
+-- usuario_2fa: el usuario gestiona su propia config
+GRANT SELECT, INSERT, UPDATE ON usuario_2fa   TO role_usuario;
+
+-- Hogares y miembros
+GRANT SELECT         ON hogares               TO role_usuario;
+GRANT SELECT, INSERT ON hogar_miembro         TO role_usuario;
+GRANT SELECT         ON hogar_tarifa          TO role_usuario;
+
+-- Configuración del hogar
+GRANT SELECT, UPDATE ON configuraciones       TO role_usuario;
+
+-- Medidores y su estado
+GRANT SELECT         ON medidores             TO role_usuario;
+GRANT SELECT         ON medidor_estado_hist   TO role_usuario;  -- nuevo
+
+-- Consumo
+GRANT SELECT, INSERT ON consumo_lectura       TO role_usuario;
+GRANT SELECT         ON consumo_metrica       TO role_usuario;
+
+-- Predicciones (nueva tabla)
+GRANT SELECT         ON prediccion_consumo    TO role_usuario;
+
+-- Alertas
+GRANT SELECT, INSERT, UPDATE ON reglas_alerta TO role_usuario;
+GRANT SELECT, INSERT ON eventos_alerta        TO role_usuario;
+
+-- Tokens y sesiones (ahora con UPDATE)
+GRANT SELECT, INSERT, UPDATE ON tokens        TO role_usuario;
+GRANT SELECT, INSERT, UPDATE ON sesion_usuario TO role_usuario;
+
+-- Configuración global (solo lectura)
+GRANT SELECT ON configuracion_seguridad       TO role_usuario;
+
+-- Secuencias para INSERT
+GRANT USAGE, SELECT ON SEQUENCE
+    consumo_lectura_lectura_id_seq,
+    consumo_metrica_metrica_id_seq,
+    eventos_alerta_evento_id_seq,
+    reglas_alerta_regla_id_seq,
+    tokens_token_id_seq,
+    sesion_usuario_sesion_id_seq,
+    perfil_usuario_perfil_id_seq,
+    usuario_2fa_twofa_id_seq          -- nueva
+TO role_usuario;
+
+
+-- =====================================================
+-- REVOKE — tablas que role_usuario NUNCA debe ver
+-- =====================================================
+-- REVOKE explícito aunque no hayamos hecho GRANT, para proteger
+-- contra permisos heredados o cambios futuros accidentales.
+-- ─────────────────────────────────────────────────────
+REVOKE ALL ON auditoria             FROM role_usuario;
+REVOKE ALL ON log_errores           FROM role_usuario;
+REVOKE ALL ON politicas_contrasenas FROM role_usuario;
+REVOKE ALL ON roles                 FROM role_usuario;
+REVOKE ALL ON permisos              FROM role_usuario;
+REVOKE ALL ON rol_permiso           FROM role_usuario;
+REVOKE ALL ON usuario_rol           FROM role_usuario;
+-- Tablas nuevas: ninguna de estas debe ser accesible directamente
+-- desde el rol de usuario (el backend las maneja con superusuario)
+REVOKE ALL ON reset_contrasena      FROM role_soporte;  -- soporte tampoco

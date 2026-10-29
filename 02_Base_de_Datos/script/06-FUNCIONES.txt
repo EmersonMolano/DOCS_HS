@@ -1,0 +1,638 @@
+-- =====================================================
+-- HIDRO SMART v3 — 06 FUNCIONES
+-- Ejecutar DESPUÉS de 05_vistas.sql
+-- =====================================================
+--
+-- ¿Diferencia entre FUNCTION y PROCEDURE?
+--   FUNCTION  → retorna un valor; se usa dentro de un SELECT.
+--               No puede hacer COMMIT/ROLLBACK.
+--   PROCEDURE → se llama con CALL; puede manejar transacciones.
+--               Ya los usamos en 04_triggers.sql para login, etc.
+--
+-- Aquí creamos FUNCTIONS porque devuelven datos que el backend
+-- necesita procesar o mostrar directamente.
+-- =====================================================
+
+
+-- ─── Limpieza previa ─────────────────────────────────
+DROP FUNCTION IF EXISTS fn_consumo_periodo(INTEGER, DATE, DATE)         CASCADE;
+DROP FUNCTION IF EXISTS fn_costo_estimado_mes(INTEGER, INTEGER)         CASCADE;
+DROP FUNCTION IF EXISTS fn_solicitar_reset_contrasena(INTEGER, VARCHAR) CASCADE;
+DROP FUNCTION IF EXISTS fn_validar_token_reset(VARCHAR, VARCHAR)        CASCADE;
+DROP FUNCTION IF EXISTS fn_activar_2fa(INTEGER, VARCHAR)                CASCADE;
+DROP FUNCTION IF EXISTS fn_verificar_codigo_2fa(INTEGER, VARCHAR)       CASCADE;
+DROP FUNCTION IF EXISTS fn_resumen_consumo_hogar(INTEGER)               CASCADE;
+
+
+-- =====================================================
+-- FUNCIÓN 1: fn_consumo_periodo
+-- =====================================================
+-- Retorna el consumo total en m³ de un medidor en un rango
+-- de fechas. Util para reportes personalizados y para el
+-- cálculo de predicciones.
+--
+-- p_medidor_id : medidor a consultar
+-- p_desde      : inicio del rango (inclusive)
+-- p_hasta      : fin del rango (inclusive)
+--
+-- RETURNS DECIMAL: devuelve un solo número (los m³ totales).
+-- COALESCE(..., 0): si no hay lecturas, retorna 0 en vez de NULL.
+-- STABLE: indica a PG que esta función no modifica la BD y que
+--   devuelve el mismo resultado para los mismos parámetros dentro
+--   de una transacción. PG puede optimizar su ejecución.
+-- =====================================================
+CREATE OR REPLACE FUNCTION fn_consumo_periodo(
+    p_medidor_id INTEGER,
+    p_desde      DATE,
+    p_hasta      DATE
+)
+RETURNS DECIMAL(10,4)
+LANGUAGE sql STABLE AS $$
+    SELECT COALESCE(SUM(cantidad_consumida), 0)
+    FROM consumo_lectura
+    WHERE medidor_id   = p_medidor_id
+      AND fecha_lectura >= p_desde::TIMESTAMPTZ
+      AND fecha_lectura <  (p_hasta + 1)::TIMESTAMPTZ;
+      -- +1 día para incluir todo el último día (hasta las 23:59:59)
+$$;
+
+
+-- =====================================================
+-- FUNCIÓN 2: fn_costo_estimado_mes
+-- =====================================================
+-- Proyecta el costo total al final del mes basándose en el
+-- ritmo de consumo actual. Si llevamos 10 días con 5 m³,
+-- la proyección para 30 días sería 15 m³.
+--
+-- Fórmula:
+--   consumo_hasta_hoy / días_transcurridos * días_del_mes
+--
+-- p_hogar_id  : hogar a proyectar
+-- p_medidor_id: medidor específico (NULL = todos los del hogar)
+--
+-- RETURNS TABLE: devuelve múltiples columnas como una mini-tabla.
+--   Permite hacer SELECT * FROM fn_costo_estimado_mes(1, 1).
+--
+-- EXTRACT(DAY FROM ...): extrae el número de día del mes.
+--   CURRENT_DATE: día de hoy (ej: 15 si estamos a día 15).
+--   date_trunc + interval: primer día del mes siguiente menos
+--   1 día = último día del mes actual → total de días del mes.
+-- =====================================================
+CREATE OR REPLACE FUNCTION fn_costo_estimado_mes(
+    p_hogar_id   INTEGER,
+    p_medidor_id INTEGER DEFAULT NULL
+)
+RETURNS TABLE (
+    hogar_id          INTEGER,
+    medidor_id        INTEGER,
+    mes               DATE,
+    consumo_hasta_hoy DECIMAL(10,4),
+    costo_hasta_hoy   DECIMAL(10,2),
+    dias_transcurridos INTEGER,
+    dias_del_mes       INTEGER,
+    consumo_proyectado DECIMAL(10,4),
+    costo_proyectado   DECIMAL(10,2),
+    tarifa_aplicada    DECIMAL(12,4)
+)
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+    v_dias_hoy    INTEGER;
+    v_dias_mes    INTEGER;
+    v_valor_m3    DECIMAL(12,4);
+    v_cargo_fijo  DECIMAL(12,2);
+BEGIN
+    -- Días transcurridos del mes actual (del día 1 al día de hoy)
+    v_dias_hoy := EXTRACT(DAY FROM CURRENT_DATE)::INTEGER;
+
+    -- Total de días del mes actual
+    v_dias_mes := EXTRACT(DAY FROM
+        (date_trunc('month', CURRENT_DATE) + INTERVAL '1 month - 1 day')
+    )::INTEGER;
+
+    -- Tarifa vigente del hogar
+    SELECT ht.valor_m3, ht.cargo_fijo
+    INTO   v_valor_m3, v_cargo_fijo
+    FROM   hogar_tarifa ht
+    WHERE  ht.hogar_id = p_hogar_id
+      AND  ht.vigente_desde <= CURRENT_DATE
+      AND  (ht.vigente_hasta IS NULL OR ht.vigente_hasta >= CURRENT_DATE)
+    ORDER BY ht.vigente_desde DESC
+    LIMIT 1;
+
+    -- Proyección por medidor del hogar
+    RETURN QUERY
+    SELECT
+        m.hogar_id,
+        m.medidor_id,
+        date_trunc('month', CURRENT_DATE)::DATE                AS mes,
+        -- consumo real acumulado este mes
+        COALESCE(SUM(cl.cantidad_consumida), 0)                AS consumo_hasta_hoy,
+        -- costo real acumulado este mes
+        ROUND(COALESCE(SUM(cm.costo_calculado), 0)::NUMERIC,2) AS costo_hasta_hoy,
+        v_dias_hoy                                             AS dias_transcurridos,
+        v_dias_mes                                             AS dias_del_mes,
+        -- proyección lineal al final del mes
+        ROUND(
+            COALESCE(SUM(cl.cantidad_consumida), 0)
+            * v_dias_mes / NULLIF(v_dias_hoy, 0)
+        , 4)                                                   AS consumo_proyectado,
+        -- costo proyectado incluyendo cargo fijo
+        ROUND((
+            COALESCE(SUM(cl.cantidad_consumida), 0)
+            * v_dias_mes / NULLIF(v_dias_hoy, 0)
+            * COALESCE(v_valor_m3, 0)
+            + COALESCE(v_cargo_fijo, 0)
+        )::NUMERIC, 2)                                         AS costo_proyectado,
+        COALESCE(v_valor_m3, 0)                                AS tarifa_aplicada
+    FROM medidores m
+    LEFT JOIN consumo_lectura cl
+           ON cl.medidor_id  = m.medidor_id
+          AND date_trunc('month', cl.fecha_lectura) = date_trunc('month', CURRENT_DATE)
+    LEFT JOIN consumo_metrica cm ON cm.lectura_id = cl.lectura_id
+    WHERE m.hogar_id   = p_hogar_id
+      AND (p_medidor_id IS NULL OR m.medidor_id = p_medidor_id)
+    GROUP BY m.hogar_id, m.medidor_id;
+END;
+$$;
+
+
+-- =====================================================
+-- FUNCIÓN 3: fn_solicitar_reset_contrasena
+-- =====================================================
+-- Genera un token aleatorio para recuperación de contraseña
+-- (RF1.3 del SRS). Invalida tokens anteriores del mismo usuario
+-- (un usuario no puede tener dos resets activos a la vez),
+-- guarda el hash del nuevo token y retorna el token en claro
+-- para que el backend lo envíe por email.
+--
+-- El backend NUNCA guarda el token en claro; lo envía al email
+-- y descarta la variable. La BD solo guarda el hash.
+--
+-- p_usuario_id  : usuario que solicita el reset
+-- p_ip_solicitud: IP desde donde se hizo la solicitud
+--
+-- RETURNS TEXT: el token en claro (solo en este momento).
+-- gen_random_uuid(): genera un UUID v4 aleatorio de 36 chars.
+--   Usamos dos concatenados para un token de 73 chars, lo
+--   suficientemente largo para ser imprevisible por fuerza bruta.
+-- =====================================================
+CREATE OR REPLACE FUNCTION fn_solicitar_reset_contrasena(
+    p_usuario_id   INTEGER,
+    p_ip_solicitud VARCHAR DEFAULT NULL
+)
+RETURNS TEXT
+LANGUAGE plpgsql
+SECURITY DEFINER AS $$
+DECLARE
+    v_token_claro TEXT;
+    v_token_hash  TEXT;
+BEGIN
+    -- Verificar que el usuario existe y tiene credenciales locales
+    IF NOT EXISTS (
+        SELECT 1 FROM credenciales_locales WHERE usuario_id = p_usuario_id
+    ) THEN
+        RAISE EXCEPTION 'El usuario no tiene autenticación local';
+    END IF;
+
+    -- Invalidar tokens de reset anteriores no usados
+    -- (un usuario activo no debería tener más de uno pendiente)
+    UPDATE reset_contrasena
+    SET    usado    = TRUE,
+           usado_en = CURRENT_TIMESTAMP
+    WHERE  usuario_id = p_usuario_id
+      AND  usado      = FALSE;
+
+    -- Generar token aleatorio en claro: dos UUIDs concatenados
+    -- Ejemplo: 'a1b2c3d4-...-e5f6' || '-' || '7a8b9c0d-...'
+    v_token_claro := gen_random_uuid()::TEXT || gen_random_uuid()::TEXT;
+
+    -- Hashear el token antes de guardarlo (SHA-256 es suficiente
+    -- aquí porque el token ya es largo y aleatorio; SHA-512 sería
+    -- excesivo para este caso de uso)
+    v_token_hash := encode(digest(v_token_claro, 'sha256'), 'hex');
+
+    -- Guardar el hash (nunca el token en claro)
+    INSERT INTO reset_contrasena (
+        usuario_id, token_hash, expira_en, ip_solicitud
+    ) VALUES (
+        p_usuario_id,
+        v_token_hash,
+        CURRENT_TIMESTAMP + INTERVAL '20 minutes',  -- caduca en 20 min
+        p_ip_solicitud
+    );
+
+    -- Registrar en auditoría
+    INSERT INTO auditoria (usuario_id, accion, tabla_afectada, descripcion, ip_origen)
+    VALUES (p_usuario_id, 'RESET_SOLICITADO', 'reset_contrasena',
+            'Token de reset generado', p_ip_solicitud);
+
+    -- Retornar el token en claro (el backend lo envía por email y lo descarta)
+    RETURN v_token_claro;
+END;
+$$;
+
+
+-- =====================================================
+-- FUNCIÓN 4: fn_validar_token_reset
+-- =====================================================
+-- Verifica que el token de reset sea válido (no expirado,
+-- no usado, que pertenezca al usuario correcto) y si todo
+-- está bien, lo marca como usado y permite el cambio de clave.
+--
+-- El backend llama a esta función ANTES de llamar a
+-- sp_cambiar_contrasena (del archivo 04_triggers.sql).
+--
+-- p_token_claro   : token recibido en el link del email
+-- p_nueva_clave   : nueva contraseña que quiere el usuario
+--
+-- RETURNS BOOLEAN: TRUE si el reset fue exitoso, FALSE si falló.
+--
+-- Por qué retornamos BOOLEAN y no lanzamos excepción:
+--   En flujos de frontend es más limpio manejar un booleano
+--   que capturar excepciones; el backend decide qué mostrar.
+-- =====================================================
+CREATE OR REPLACE FUNCTION fn_validar_token_reset(
+    p_token_claro  TEXT,
+    p_nueva_clave  VARCHAR
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER AS $$
+DECLARE
+    v_hash       TEXT;
+    v_reset      reset_contrasena%ROWTYPE;
+    v_salt_nuevo VARCHAR(100);
+BEGIN
+    -- Hashear el token recibido para comparar con el guardado
+    v_hash := encode(digest(p_token_claro, 'sha256'), 'hex');
+
+    -- Buscar el token en la BD
+    SELECT * INTO v_reset
+    FROM reset_contrasena
+    WHERE token_hash = v_hash
+      AND usado      = FALSE
+      AND expira_en  > CURRENT_TIMESTAMP;
+
+    -- Si no se encontró: token inválido, expirado o ya usado
+    IF NOT FOUND THEN
+        INSERT INTO log_errores (tipo_error, descripcion, severidad)
+        VALUES ('Token reset inválido',
+                'Intento de reset con token inexpirado/inválido', 'WARN');
+        RETURN FALSE;
+    END IF;
+
+    -- Marcar token como usado
+    UPDATE reset_contrasena
+    SET    usado    = TRUE,
+           usado_en = CURRENT_TIMESTAMP
+    WHERE  reset_id = v_reset.reset_id;
+
+    -- Generar nuevo salt y actualizar contraseña directamente
+    -- (no llamamos sp_cambiar_contrasena porque ese procedimiento
+    -- exige la contraseña actual, que aquí no tenemos)
+    v_salt_nuevo := gen_random_uuid()::TEXT;
+
+    UPDATE credenciales_locales
+    SET    salt               = v_salt_nuevo,
+           contrasena_hash    = encode(
+               digest(v_salt_nuevo || p_nueva_clave, 'sha512'), 'hex'
+           ),
+           ultima_cambio_pass = CURRENT_TIMESTAMP
+    WHERE  usuario_id = v_reset.usuario_id;
+
+    -- Revocar todos los tokens activos del usuario
+    UPDATE tokens
+    SET    estado = 'Revocado'
+    WHERE  usuario_id = v_reset.usuario_id
+      AND  estado     = 'Activo';
+
+    -- Resetear intentos fallidos (el usuario recuperó acceso)
+    UPDATE estado_credencial
+    SET    intentos_fallidos = 0,
+           bloqueado_hasta   = NULL
+    WHERE  usuario_id = v_reset.usuario_id;
+
+    -- Reactivar usuario si estaba bloqueado
+    UPDATE estado_usuario
+    SET    estado        = 'Activo',
+           motivo_cambio = 'Reactivado por reset de contraseña exitoso',
+           fecha_cambio  = CURRENT_TIMESTAMP
+    WHERE  usuario_id = v_reset.usuario_id
+      AND  estado      = 'Bloqueado';
+
+    INSERT INTO auditoria (usuario_id, accion, descripcion)
+    VALUES (v_reset.usuario_id, 'RESET_COMPLETADO',
+            'Contraseña restablecida via token de reset');
+
+    RETURN TRUE;
+END;
+$$;
+
+
+-- =====================================================
+-- FUNCIÓN 5: fn_activar_2fa
+-- =====================================================
+-- Genera un secreto TOTP para el usuario e inicializa su
+-- configuración 2FA en estado no verificado.
+-- El usuario debe confirmar el setup escaneando el QR
+-- y enviando un código válido antes de que 2FA se active.
+--
+-- p_usuario_id: usuario que activa 2FA
+-- p_metodo    : 'TOTP', 'SMS' o 'Email'
+--
+-- RETURNS TEXT: el secreto en claro (solo aquí; para el QR).
+--   El backend lo usa para generar el QR y luego lo descarta.
+--   En la BD queda guardado para validar códigos futuros.
+--
+-- Nota sobre seguridad del secreto_totp:
+--   En un sistema de producción real el secreto debería
+--   guardarse cifrado con pgp_sym_encrypt() de pgcrypto.
+--   Aquí lo guardamos en texto por simplicidad del ejemplo;
+--   el backend puede cifrar antes de llamar esta función.
+-- =====================================================
+CREATE OR REPLACE FUNCTION fn_activar_2fa(
+    p_usuario_id INTEGER,
+    p_metodo     VARCHAR DEFAULT 'TOTP'
+)
+RETURNS TEXT
+LANGUAGE plpgsql
+SECURITY DEFINER AS $$
+DECLARE
+    v_secreto TEXT;
+BEGIN
+    -- Verificar que el usuario existe
+    IF NOT EXISTS (SELECT 1 FROM usuarios WHERE usuario_id = p_usuario_id) THEN
+        RAISE EXCEPTION 'Usuario no encontrado';
+    END IF;
+
+    -- Generar secreto TOTP: 32 caracteres base32-like usando UUID
+    -- En producción real usar una librería TOTP del backend para
+    -- generar un secreto base32 estándar compatible con Google Authenticator.
+    v_secreto := upper(replace(gen_random_uuid()::TEXT, '-', ''));
+
+    -- Insertar o reemplazar la configuración 2FA
+    INSERT INTO usuario_2fa (
+        usuario_id, metodo, secreto_totp,
+        activo, verificado, fecha_activacion
+    ) VALUES (
+        p_usuario_id, p_metodo, v_secreto,
+        FALSE,  -- activo = FALSE hasta que el usuario confirme
+        FALSE,  -- verificado = FALSE hasta primer código correcto
+        CURRENT_TIMESTAMP
+    )
+    ON CONFLICT (usuario_id) DO UPDATE
+        SET metodo           = EXCLUDED.metodo,
+            secreto_totp     = EXCLUDED.secreto_totp,
+            activo           = FALSE,
+            verificado       = FALSE,
+            fecha_activacion = CURRENT_TIMESTAMP;
+
+    INSERT INTO auditoria (usuario_id, accion, descripcion)
+    VALUES (p_usuario_id, '2FA_INICIO_SETUP',
+            'Setup de 2FA iniciado — método: ' || p_metodo);
+
+    -- Retornar secreto en claro para que el backend genere el QR
+    RETURN v_secreto;
+END;
+$$;
+
+
+-- =====================================================
+-- FUNCIÓN 6: fn_verificar_codigo_2fa
+-- =====================================================
+-- Verifica el código de 6 dígitos ingresado por el usuario.
+-- Si es correcto, marca 2FA como verificado y activo.
+--
+-- Nota importante sobre TOTP:
+--   Un servidor TOTP real valida el código calculando
+--   HOTP(secreto, floor(unix_time/30)) y comparando con
+--   el código ingresado. Eso requiere una librería externa
+--   (ej: pgcrypto + lógica HMAC-SHA1).
+--   Esta función simula la verificación: en producción
+--   el backend valida el TOTP y llama a esta función
+--   solo si el código ya fue validado externamente.
+--
+-- p_usuario_id : usuario que está verificando
+-- p_codigo     : código de 6 dígitos ingresado
+--
+-- RETURNS BOOLEAN: TRUE si la verificación fue exitosa.
+-- =====================================================
+CREATE OR REPLACE FUNCTION fn_verificar_codigo_2fa(
+    p_usuario_id INTEGER,
+    p_codigo     VARCHAR
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER AS $$
+DECLARE
+    v_config usuario_2fa%ROWTYPE;
+BEGIN
+    SELECT * INTO v_config
+    FROM usuario_2fa
+    WHERE usuario_id = p_usuario_id;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'El usuario no tiene 2FA configurado';
+    END IF;
+
+    -- Verificación simulada: el backend valida el TOTP/SMS/Email
+    -- externamente y pasa el resultado aquí.
+    -- En producción: el backend compara el código con TOTP(secreto, tiempo)
+    -- y solo llama esta función si ya fue validado.
+    -- Para TOTP real: usar pgcrypto HMAC-SHA1 o validar en el backend.
+
+    IF p_codigo IS NOT NULL AND length(p_codigo) = 6 THEN
+
+        -- Marcar como verificado y activo en el primer uso correcto
+        UPDATE usuario_2fa
+        SET    verificado       = TRUE,
+               activo           = TRUE,
+               ultimo_uso       = CURRENT_TIMESTAMP
+        WHERE  usuario_id       = p_usuario_id;
+
+        INSERT INTO auditoria (usuario_id, accion, descripcion)
+        VALUES (p_usuario_id, '2FA_VERIFICADO', 'Segundo factor verificado correctamente');
+
+        RETURN TRUE;
+    ELSE
+        INSERT INTO log_errores (usuario_id, tipo_error, descripcion, severidad)
+        VALUES (p_usuario_id, '2FA_FALLIDO', 'Código 2FA inválido', 'WARN');
+
+        RETURN FALSE;
+    END IF;
+END;
+$$;
+
+
+-- =====================================================
+-- FUNCIÓN 7: fn_resumen_consumo_hogar
+-- =====================================================
+-- Retorna un resumen completo del mes actual para un hogar:
+-- consumo total, costo, actividad más frecuente, comparación
+-- con el mes anterior y estado respecto al tope configurado.
+-- Es la función principal que alimenta el dashboard.
+--
+-- RETURNS TABLE: múltiples columnas en una sola llamada.
+-- LAG sería ideal para comparar meses pero requeriría una
+-- subconsulta; aquí usamos dos SUMs separados para claridad.
+-- =====================================================
+CREATE OR REPLACE FUNCTION fn_resumen_consumo_hogar(
+    p_hogar_id INTEGER
+)
+RETURNS TABLE (
+    hogar_id             INTEGER,
+    hogar_nombre         VARCHAR,
+    mes_actual           DATE,
+    consumo_mes_actual   DECIMAL(10,4),
+    costo_mes_actual     DECIMAL(10,2),
+    consumo_mes_anterior DECIMAL(10,4),
+    variacion_porcentual DECIMAL(5,2),
+    actividad_principal  VARCHAR,
+    consumo_tope         DECIMAL(10,2),
+    porcentaje_del_tope  DECIMAL(5,2),
+    estado_tope          VARCHAR,        -- 'OK', 'ALERTA', 'EXCEDIDO'
+    tarifa_vigente_m3    DECIMAL(12,4),
+    total_lecturas_mes   BIGINT
+)
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+    v_inicio_mes_actual   DATE;
+    v_inicio_mes_anterior DATE;
+BEGIN
+    v_inicio_mes_actual   := date_trunc('month', CURRENT_DATE)::DATE;
+    v_inicio_mes_anterior := (date_trunc('month', CURRENT_DATE) - INTERVAL '1 month')::DATE;
+
+    RETURN QUERY
+    WITH consumo_actual AS (
+        -- Consumo del mes actual
+        SELECT
+            SUM(cl.cantidad_consumida)               AS total_m3,
+            COALESCE(SUM(cm.costo_calculado), 0)     AS total_costo,
+            COUNT(cl.lectura_id)                     AS total_lecturas
+        FROM medidores m
+        JOIN consumo_lectura cl  ON cl.medidor_id = m.medidor_id
+        LEFT JOIN consumo_metrica cm ON cm.lectura_id = cl.lectura_id
+        WHERE m.hogar_id = p_hogar_id
+          AND cl.fecha_lectura >= v_inicio_mes_actual::TIMESTAMPTZ
+    ),
+    consumo_anterior AS (
+        -- Consumo del mes anterior (para comparar)
+        SELECT SUM(cl.cantidad_consumida) AS total_m3
+        FROM medidores m
+        JOIN consumo_lectura cl ON cl.medidor_id = m.medidor_id
+        WHERE m.hogar_id = p_hogar_id
+          AND cl.fecha_lectura >= v_inicio_mes_anterior::TIMESTAMPTZ
+          AND cl.fecha_lectura <  v_inicio_mes_actual::TIMESTAMPTZ
+    ),
+    actividad_top AS (
+        -- Actividad con más consumo este mes
+        SELECT cl.actividad
+        FROM medidores m
+        JOIN consumo_lectura cl ON cl.medidor_id = m.medidor_id
+        WHERE m.hogar_id = p_hogar_id
+          AND cl.fecha_lectura >= v_inicio_mes_actual::TIMESTAMPTZ
+        GROUP BY cl.actividad
+        ORDER BY SUM(cl.cantidad_consumida) DESC
+        LIMIT 1
+    )
+    SELECT
+        h.hogar_id,
+        h.nombre                                            AS hogar_nombre,
+        v_inicio_mes_actual                                 AS mes_actual,
+        COALESCE(ca.total_m3, 0)                            AS consumo_mes_actual,
+        ROUND(COALESCE(ca.total_costo, 0)::NUMERIC, 2)      AS costo_mes_actual,
+        COALESCE(cp.total_m3, 0)                            AS consumo_mes_anterior,
+        -- variación porcentual respecto al mes anterior
+        ROUND(
+            CASE WHEN COALESCE(cp.total_m3, 0) = 0 THEN NULL
+                 ELSE (COALESCE(ca.total_m3, 0) - cp.total_m3)
+                      * 100.0 / cp.total_m3
+            END::NUMERIC, 2
+        )                                                   AS variacion_porcentual,
+        COALESCE(at.actividad, 'Sin datos')                 AS actividad_principal,
+        cfg.consumo_tope,
+        -- porcentaje del tope consumido
+        ROUND(
+            CASE WHEN cfg.consumo_tope IS NULL OR cfg.consumo_tope = 0 THEN NULL
+                 ELSE COALESCE(ca.total_m3, 0) * 100.0 / cfg.consumo_tope
+            END::NUMERIC, 2
+        )                                                   AS porcentaje_del_tope,
+        -- estado semáforo respecto al tope
+        CASE
+            WHEN cfg.consumo_tope IS NULL              THEN 'SIN_TOPE'
+            WHEN COALESCE(ca.total_m3,0) >= cfg.consumo_tope   THEN 'EXCEDIDO'
+            WHEN COALESCE(ca.total_m3,0) >= cfg.consumo_tope * 0.85 THEN 'ALERTA'
+            ELSE 'OK'
+        END                                                 AS estado_tope,
+        ht.valor_m3                                         AS tarifa_vigente_m3,
+        COALESCE(ca.total_lecturas, 0)                      AS total_lecturas_mes
+    FROM hogares h
+    LEFT JOIN configuraciones cfg ON cfg.hogar_id = h.hogar_id
+    LEFT JOIN hogar_tarifa    ht
+           ON ht.hogar_id     = h.hogar_id
+          AND ht.vigente_desde <= CURRENT_DATE
+          AND (ht.vigente_hasta IS NULL OR ht.vigente_hasta >= CURRENT_DATE)
+    LEFT JOIN consumo_actual  ca  ON TRUE
+    LEFT JOIN consumo_anterior cp ON TRUE
+    LEFT JOIN actividad_top   at  ON TRUE
+    WHERE h.hogar_id = p_hogar_id
+    ORDER BY ht.vigente_desde DESC
+    LIMIT 1;
+END;
+$$;
+
+
+-- =====================================================
+-- GRANTS SOBRE LAS FUNCIONES
+-- =====================================================
+-- EXECUTE: permiso para llamar una función.
+-- Sin este GRANT, el rol no puede ejecutar la función
+-- aunque tenga acceso a las tablas que usa.
+
+-- role_admin: ejecuta todo
+GRANT EXECUTE ON FUNCTION fn_consumo_periodo(INTEGER, DATE, DATE)         TO role_admin;
+GRANT EXECUTE ON FUNCTION fn_costo_estimado_mes(INTEGER, INTEGER)         TO role_admin;
+GRANT EXECUTE ON FUNCTION fn_solicitar_reset_contrasena(INTEGER, VARCHAR) TO role_admin;
+GRANT EXECUTE ON FUNCTION fn_validar_token_reset(TEXT, VARCHAR)           TO role_admin;
+GRANT EXECUTE ON FUNCTION fn_activar_2fa(INTEGER, VARCHAR)                TO role_admin;
+GRANT EXECUTE ON FUNCTION fn_verificar_codigo_2fa(INTEGER, VARCHAR)       TO role_admin;
+GRANT EXECUTE ON FUNCTION fn_resumen_consumo_hogar(INTEGER)               TO role_admin;
+
+-- role_soporte: solo consulta de consumo (diagnóstico)
+GRANT EXECUTE ON FUNCTION fn_consumo_periodo(INTEGER, DATE, DATE) TO role_soporte;
+GRANT EXECUTE ON FUNCTION fn_resumen_consumo_hogar(INTEGER)       TO role_soporte;
+
+-- role_usuario: sus propias funciones de consulta y seguridad
+GRANT EXECUTE ON FUNCTION fn_consumo_periodo(INTEGER, DATE, DATE)         TO role_usuario;
+GRANT EXECUTE ON FUNCTION fn_costo_estimado_mes(INTEGER, INTEGER)         TO role_usuario;
+GRANT EXECUTE ON FUNCTION fn_solicitar_reset_contrasena(INTEGER, VARCHAR) TO role_usuario;
+GRANT EXECUTE ON FUNCTION fn_validar_token_reset(TEXT, VARCHAR)           TO role_usuario;
+GRANT EXECUTE ON FUNCTION fn_activar_2fa(INTEGER, VARCHAR)                TO role_usuario;
+GRANT EXECUTE ON FUNCTION fn_verificar_codigo_2fa(INTEGER, VARCHAR)       TO role_usuario;
+GRANT EXECUTE ON FUNCTION fn_resumen_consumo_hogar(INTEGER)               TO role_usuario;
+
+
+-- =====================================================
+-- EJEMPLOS DE USO (descomenta para probar)
+-- =====================================================
+
+-- Consumo de un medidor en un rango de fechas:
+-- SELECT fn_consumo_periodo(1, '2026-01-01', '2026-01-31');
+
+-- Proyección de costo del mes para el hogar 1:
+-- SELECT * FROM fn_costo_estimado_mes(1);
+
+-- Solicitar reset de contraseña (retorna el token en claro):
+-- SELECT fn_solicitar_reset_contrasena(3, '192.168.1.100');
+
+-- Validar token de reset y cambiar contraseña:
+-- SELECT fn_validar_token_reset('<token-del-email>', 'NuevaClave2026#');
+
+-- Iniciar setup de 2FA para el usuario 3:
+-- SELECT fn_activar_2fa(3, 'TOTP');
+
+-- Verificar código 2FA (en producción el backend valida el TOTP primero):
+-- SELECT fn_verificar_codigo_2fa(3, '123456');
+
+-- Resumen del dashboard para el hogar 1:
+-- SELECT * FROM fn_resumen_consumo_hogar(1);

@@ -1,0 +1,359 @@
+-- =====================================================
+-- HIDRO SMART v3 — 05 VISTAS
+-- Ejecutar DESPUÉS de 01_tablas.sql y 02_inserts.sql
+-- =====================================================
+--
+-- ¿Qué es una vista?
+--   Una consulta guardada con nombre. El frontend/backend
+--   hace SELECT * FROM v_nombre y obtiene el resultado
+--   sin escribir el JOIN complejo cada vez.
+--   No almacena datos; los calcula en el momento de la consulta.
+--
+-- Nota: v_medidor_estado_actual ya existe en 01_tablas.sql.
+--   Las vistas de este archivo son adicionales a esa.
+-- =====================================================
+
+
+-- ─── Limpieza previa ─────────────────────────────────
+DROP VIEW IF EXISTS v_sesiones_activas         CASCADE;
+DROP VIEW IF EXISTS v_prediccion_vs_real       CASCADE;
+DROP VIEW IF EXISTS v_tarifa_vigente           CASCADE;
+DROP VIEW IF EXISTS v_resumen_usuario          CASCADE;
+DROP VIEW IF EXISTS v_alertas_activas          CASCADE;
+DROP VIEW IF EXISTS v_consumo_por_actividad    CASCADE;
+DROP VIEW IF EXISTS v_consumo_mensual_hogar    CASCADE;
+
+
+-- =====================================================
+-- VISTA 1: v_consumo_mensual_hogar
+-- =====================================================
+-- Muestra el consumo total y el costo acumulado por hogar,
+-- agrupado por año y mes. Es la consulta principal del
+-- dashboard: "¿cuánto consumí este mes y cuánto me costó?".
+--
+-- date_trunc('month', fecha_lectura): trunca la fecha al
+--   primer día del mes. Permite agrupar todas las lecturas
+--   de un mismo mes sin importar el día exacto.
+--   Ej: '2026-03-15' y '2026-03-28' → ambas quedan '2026-03-01'.
+--
+-- COALESCE(SUM(cm.costo_calculado), 0): si no hay métricas
+--   calculadas para ese mes, devuelve 0 en vez de NULL.
+--
+-- COUNT(cl.lectura_id): cantidad de lecturas (no m³),
+--   útil para saber si el medidor está enviando datos.
+-- =====================================================
+CREATE VIEW v_consumo_mensual_hogar AS
+SELECT
+    h.hogar_id,
+    h.nombre                                        AS hogar_nombre,
+    h.ciudad,
+    m.medidor_id,
+    m.codigo_medidor,
+    date_trunc('month', cl.fecha_lectura)::DATE     AS mes,
+    SUM(cl.cantidad_consumida)                      AS total_m3,
+    COALESCE(SUM(cm.costo_calculado), 0)            AS costo_total,
+    COUNT(cl.lectura_id)                            AS total_lecturas,
+    MIN(cl.fecha_lectura)                           AS primera_lectura,
+    MAX(cl.fecha_lectura)                           AS ultima_lectura
+FROM hogares h
+JOIN medidores       m  ON m.hogar_id   = h.hogar_id
+JOIN consumo_lectura cl ON cl.medidor_id = m.medidor_id
+LEFT JOIN consumo_metrica cm ON cm.lectura_id = cl.lectura_id
+GROUP BY
+    h.hogar_id, h.nombre, h.ciudad,
+    m.medidor_id, m.codigo_medidor,
+    date_trunc('month', cl.fecha_lectura)
+ORDER BY h.hogar_id, mes DESC;
+
+
+-- =====================================================
+-- VISTA 2: v_consumo_por_actividad
+-- =====================================================
+-- Desglose del consumo por tipo de actividad (Ducha, Lavado,
+-- Cocina, Aseo, Otros, General) dentro de cada mes y hogar.
+-- Permite mostrar el gráfico de torta "¿en qué gasto el agua?".
+--
+-- ROUND(..., 2): redondea a 2 decimales para evitar ruido
+--   numérico en el frontend (ej: 0.349999... → 0.35).
+--
+-- porcentaje_del_mes: qué fracción del consumo total del mes
+--   corresponde a esta actividad. Se calcula dividiendo el
+--   consumo de la actividad entre el total del mes del mismo
+--   medidor usando una subconsulta correlacionada.
+--   NULLIF evita división por cero si el total es 0.
+-- =====================================================
+CREATE VIEW v_consumo_por_actividad AS
+SELECT
+    h.hogar_id,
+    h.nombre                                        AS hogar_nombre,
+    m.medidor_id,
+    date_trunc('month', cl.fecha_lectura)::DATE     AS mes,
+    cl.actividad,
+    ROUND(SUM(cl.cantidad_consumida)::NUMERIC, 4)   AS total_m3,
+    COUNT(*)                                        AS cantidad_eventos,
+    ROUND(
+        SUM(cl.cantidad_consumida) * 100.0 /
+        NULLIF((
+            SELECT SUM(cl2.cantidad_consumida)
+            FROM consumo_lectura cl2
+            WHERE cl2.medidor_id = cl.medidor_id
+              AND date_trunc('month', cl2.fecha_lectura)
+                = date_trunc('month', cl.fecha_lectura)
+        ), 0)
+    , 2)                                            AS porcentaje_del_mes
+FROM hogares h
+JOIN medidores       m  ON m.hogar_id    = h.hogar_id
+JOIN consumo_lectura cl ON cl.medidor_id = m.medidor_id
+GROUP BY
+    h.hogar_id, h.nombre,
+    m.medidor_id,
+    date_trunc('month', cl.fecha_lectura),
+    cl.actividad
+ORDER BY h.hogar_id, mes DESC, total_m3 DESC;
+
+
+-- =====================================================
+-- VISTA 3: v_alertas_activas
+-- =====================================================
+-- Muestra los eventos de alerta que aún requieren atención:
+-- estado 'Pendiente' o 'Enviada' (no leídas ni descartadas).
+-- El frontend la usa para la campanita de notificaciones.
+--
+-- age(CURRENT_TIMESTAMP, ea.fecha_generacion): calcula cuánto
+--   tiempo lleva pendiente la alerta (ej: '2 days 03:15:00').
+--   Útil para priorizar alertas viejas que nadie leyó.
+-- =====================================================
+CREATE VIEW v_alertas_activas AS
+SELECT
+    ea.evento_id,
+    ea.usuario_id,
+    u.email,
+    pu.nombre_completo,
+    h.hogar_id,
+    h.nombre                                        AS hogar_nombre,
+    ra.tipo_alerta,
+    ra.umbral,
+    ra.canal_notif,
+    ea.mensaje,
+    ea.estado,
+    ea.fecha_generacion,
+    age(CURRENT_TIMESTAMP, ea.fecha_generacion)     AS tiempo_pendiente
+FROM eventos_alerta ea
+JOIN reglas_alerta   ra ON ra.regla_id  = ea.regla_id
+JOIN usuarios        u  ON u.usuario_id = ea.usuario_id
+JOIN perfil_usuario  pu ON pu.usuario_id = ea.usuario_id
+LEFT JOIN hogares    h  ON h.hogar_id   = ra.hogar_id
+WHERE ea.estado IN ('Pendiente', 'Enviada')
+ORDER BY ea.fecha_generacion ASC;   -- las más antiguas primero
+
+
+-- =====================================================
+-- VISTA 4: v_resumen_usuario
+-- =====================================================
+-- Perfil completo del usuario en una sola fila: datos personales,
+-- estado, rol asignado y si tiene 2FA activo.
+-- El backend la usa para construir el JWT o el objeto de sesión
+-- sin tener que hacer 4 JOINs separados en cada request.
+--
+-- STRING_AGG: concatena los roles separados por coma cuando
+--   un usuario tiene más de uno (ej: 'Admin, Soporte Técnico').
+-- =====================================================
+CREATE VIEW v_resumen_usuario AS
+SELECT
+    u.usuario_id,
+    u.nombre_usuario,
+    u.email,
+    u.tipo_autenticacion,
+    u.fecha_creacion,
+    pu.nombre_completo,
+    pu.tipo_documento,
+    pu.numero_documento,
+    pu.telefono,
+    pu.ciudad,
+    eu.estado,
+    eu.ultimo_acceso,
+    ec.intentos_fallidos,
+    ec.bloqueado_hasta,
+    STRING_AGG(r.nombre_rol, ', ' ORDER BY r.nombre_rol) AS roles,
+    -- 2FA: TRUE si tiene configuración activa y verificada
+    COALESCE(
+        (SELECT activo AND verificado
+         FROM usuario_2fa
+         WHERE usuario_id = u.usuario_id),
+        FALSE
+    )                                                    AS tiene_2fa_activo,
+    COALESCE(
+        (SELECT metodo
+         FROM usuario_2fa
+         WHERE usuario_id = u.usuario_id),
+        NULL
+    )                                                    AS metodo_2fa
+FROM usuarios        u
+JOIN perfil_usuario  pu ON pu.usuario_id = u.usuario_id
+JOIN estado_usuario  eu ON eu.usuario_id = u.usuario_id
+JOIN estado_credencial ec ON ec.usuario_id = u.usuario_id
+LEFT JOIN usuario_rol   ur ON ur.usuario_id = u.usuario_id
+LEFT JOIN roles          r  ON r.rol_id     = ur.rol_id
+GROUP BY
+    u.usuario_id, u.nombre_usuario, u.email,
+    u.tipo_autenticacion, u.fecha_creacion,
+    pu.nombre_completo, pu.tipo_documento,
+    pu.numero_documento, pu.telefono, pu.ciudad,
+    eu.estado, eu.ultimo_acceso,
+    ec.intentos_fallidos, ec.bloqueado_hasta;
+
+
+-- =====================================================
+-- VISTA 5: v_tarifa_vigente
+-- =====================================================
+-- Muestra solo la tarifa actualmente vigente de cada hogar,
+-- sin tener que filtrar por fechas en cada consulta.
+-- Un hogar aparece aquí solo si tiene tarifa con vigente_hasta = NULL
+-- (la tarifa actual) o cuya vigente_hasta >= hoy.
+--
+-- DISTINCT ON (hogar_id): se queda con la primera fila por hogar
+--   después de ordenar por vigente_desde DESC → la más reciente.
+--   Es el mismo patrón eficiente que usa v_medidor_estado_actual.
+-- =====================================================
+CREATE VIEW v_tarifa_vigente AS
+SELECT DISTINCT ON (h.hogar_id)
+    h.hogar_id,
+    h.nombre                                        AS hogar_nombre,
+    h.estrato,
+    ht.tarifa_id,
+    ht.valor_m3,
+    ht.cargo_fijo,
+    ht.vigente_desde,
+    ht.vigente_hasta,
+    ht.fuente,
+    -- costo estimado mensual si el hogar consume 15 m³ (tope por defecto)
+    ROUND((15 * ht.valor_m3 + ht.cargo_fijo)::NUMERIC, 2) AS costo_estimado_15m3
+FROM hogares h
+JOIN hogar_tarifa ht ON ht.hogar_id = h.hogar_id
+WHERE ht.vigente_hasta IS NULL
+   OR ht.vigente_hasta >= CURRENT_DATE
+ORDER BY h.hogar_id, ht.vigente_desde DESC;
+
+
+-- =====================================================
+-- VISTA 6: v_prediccion_vs_real
+-- =====================================================
+-- Compara las predicciones de consumo con el valor real,
+-- una vez que el periodo ya cerró. Permite evaluar qué tan
+-- preciso es el modelo de predicción.
+--
+-- Solo muestra predicciones donde ya existe el consumo real
+-- (cantidad_real IS NOT NULL) o cuyo periodo ya terminó.
+--
+-- error_absoluto: diferencia en m³ entre predicción y real.
+-- error_porcentual: error relativo (%). Ej: si predije 15 m³
+--   y el real fue 12 m³ → error = 25 %.
+--   ABS: valor absoluto (siempre positivo).
+--   NULLIF evita división por cero.
+-- =====================================================
+CREATE VIEW v_prediccion_vs_real AS
+SELECT
+    pc.prediccion_id,
+    pc.hogar_id,
+    h.nombre                                         AS hogar_nombre,
+    pc.medidor_id,
+    pc.tipo_modelo,
+    pc.periodo_inicio,
+    pc.periodo_fin,
+    pc.cantidad_predicha,
+    pc.intervalo_confianza_inf,
+    pc.intervalo_confianza_sup,
+    pc.cantidad_real,
+    -- métricas de error (solo cuando hay valor real)
+    CASE WHEN pc.cantidad_real IS NOT NULL
+         THEN ROUND(ABS(pc.cantidad_predicha - pc.cantidad_real)::NUMERIC, 4)
+    END                                              AS error_absoluto_m3,
+    CASE WHEN pc.cantidad_real IS NOT NULL
+         THEN ROUND(
+             ABS(pc.cantidad_predicha - pc.cantidad_real) * 100.0 /
+             NULLIF(pc.cantidad_real, 0)
+         , 2)
+    END                                              AS error_porcentual,
+    -- ¿el real cayó dentro del intervalo de confianza?
+    CASE WHEN pc.cantidad_real IS NOT NULL
+              AND pc.intervalo_confianza_inf IS NOT NULL
+         THEN pc.cantidad_real BETWEEN pc.intervalo_confianza_inf
+                                   AND pc.intervalo_confianza_sup
+    END                                              AS dentro_del_IC,
+    pc.generado_en,
+    pc.metadatos
+FROM prediccion_consumo pc
+JOIN hogares h ON h.hogar_id = pc.hogar_id
+WHERE pc.periodo_fin < CURRENT_DATE   -- solo periodos ya cerrados
+ORDER BY pc.hogar_id, pc.periodo_inicio DESC;
+
+
+-- =====================================================
+-- VISTA 7: v_sesiones_activas
+-- =====================================================
+-- Lista todas las sesiones abiertas en este momento,
+-- con la información del dispositivo y el token asociado.
+-- El admin la usa para ver quién está conectado y,
+-- si es necesario, revocar sesiones sospechosas.
+--
+-- age(CURRENT_TIMESTAMP, su.fecha_inicio): tiempo que lleva
+--   abierta la sesión (ej: '1 day 04:32:11').
+--
+-- t.expira_en - CURRENT_TIMESTAMP: tiempo que le queda al token
+--   antes de expirar. Negativo si ya venció pero no se cerró.
+-- =====================================================
+CREATE VIEW v_sesiones_activas AS
+SELECT
+    su.sesion_id,
+    su.usuario_id,
+    u.nombre_usuario,
+    pu.nombre_completo,
+    su.fecha_inicio,
+    age(CURRENT_TIMESTAMP, su.fecha_inicio)          AS duracion_sesion,
+    su.ip_origen,
+    su.dispositivo,
+    su.estado_sesion,
+    su.twofa_verificado,
+    t.tipo                                           AS tipo_token,
+    t.expira_en,
+    t.expira_en - CURRENT_TIMESTAMP                  AS tiempo_restante_token,
+    t.estado                                         AS estado_token
+FROM sesion_usuario  su
+JOIN usuarios        u  ON u.usuario_id  = su.usuario_id
+JOIN perfil_usuario  pu ON pu.usuario_id = su.usuario_id
+LEFT JOIN tokens     t  ON t.token_id    = su.token_id
+WHERE su.estado_sesion = 'Activo'
+ORDER BY su.fecha_inicio DESC;
+
+
+-- =====================================================
+-- GRANTS SOBRE LAS VISTAS
+-- =====================================================
+-- Las vistas heredan los permisos de las tablas base,
+-- pero hay que hacer GRANT explícito para que los roles
+-- puedan hacer SELECT sobre ellas.
+
+-- role_admin: ve todo
+GRANT SELECT ON v_consumo_mensual_hogar  TO role_admin;
+GRANT SELECT ON v_consumo_por_actividad  TO role_admin;
+GRANT SELECT ON v_alertas_activas        TO role_admin;
+GRANT SELECT ON v_resumen_usuario        TO role_admin;
+GRANT SELECT ON v_tarifa_vigente         TO role_admin;
+GRANT SELECT ON v_prediccion_vs_real     TO role_admin;
+GRANT SELECT ON v_sesiones_activas       TO role_admin;
+
+-- role_soporte: ve medidores, consumos y predicciones (diagnóstico),
+-- pero NO ve perfiles de usuarios ni sesiones activas
+GRANT SELECT ON v_consumo_mensual_hogar  TO role_soporte;
+GRANT SELECT ON v_consumo_por_actividad  TO role_soporte;
+GRANT SELECT ON v_tarifa_vigente         TO role_soporte;
+GRANT SELECT ON v_prediccion_vs_real     TO role_soporte;
+
+-- role_usuario: solo ve sus propios datos
+-- RLS de las tablas base filtra las filas automáticamente
+GRANT SELECT ON v_consumo_mensual_hogar  TO role_usuario;
+GRANT SELECT ON v_consumo_por_actividad  TO role_usuario;
+GRANT SELECT ON v_alertas_activas        TO role_usuario;
+GRANT SELECT ON v_resumen_usuario        TO role_usuario;
+GRANT SELECT ON v_tarifa_vigente         TO role_usuario;
+GRANT SELECT ON v_prediccion_vs_real     TO role_usuario;
