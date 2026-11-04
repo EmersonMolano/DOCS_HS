@@ -235,3 +235,49 @@ Los índices aceleran filtros y relaciones; los únicos impiden duplicados funci
 3. Consulta 04_alter antes de asumir que una tabla solo tiene sus columnas originales.
 4. Busca una función, procedimiento o trigger antes de añadir SQL desde backend.
 5. Revisa 09_indexes antes de crear índices nuevos.
+
+## Verificación contra BD_HS (2026-11-03)
+
+Revisión estática de la rama local `hu-23-dev` del repositorio `BD_HS`. Esta
+fecha indica revisión de archivos; no afirma que estos changesets están
+aplicados en Neon u otro entorno. El estado efectivo de una base se confirma
+con `liquibase status --verbose` y `DATABASECHANGELOG`.
+
+La estructura inventariada contiene 56 tablas en nueve esquemas de dominio,
+cinco vistas materializadas y cuatro procedimientos. Las funciones evolucionan
+por reemplazos sucesivos; por eso no se debe interpretar el número de archivos
+como el número de funciones vigentes.
+
+### Changesets recientes que completan la guía
+
+- `04_alter/034_device_measurement_state.sql` añade a `device.device`
+  `measurement_enabled` (por defecto `TRUE`) y `measurement_updated_at`.
+- `06_functions/064_fn_home_creation_default_alerts.sql` establece el contrato
+  de creación de hogar con límites diarios/mensuales editables.
+- `06_functions/065_fn_record_device_measurement_state.sql` persiste el estado
+  de medición confirmado por el ESP32 y descarta eventos anteriores al estado
+  ya guardado o con timestamp demasiado futuro.
+- `06_functions/066_fn_leak_watch_measurement_paused.sql` permite evaluar
+  caudal/pulsos durante la pausa de contabilización, sin sumar ese consumo.
+- `06_functions/067_fn_default_leak_detection_rule.sql` crea reglas activas de
+  fuga de 30 minutos para hogares existentes que no tengan una, y agrega la
+  misma regla al flujo de creación de hogares nuevos.
+
+El estado de medición es diferente de la conectividad: pausar la contabilización
+no equivale a apagar el ESP32 ni a dejar de recibir telemetría.
+
+### Alcance y ejecución
+
+`changelog-master.yaml` incluye roles técnicos, DDL, DML y DCL. No incluye
+`04_tcl` ni `05_rollbacks`: los archivos de TCL son operativos/manuales y las
+reversiones se invocan desde el changeset original o se ejecutan con un plan
+explícito. No ejecutes directamente los SQL de `01_ddl` como si fueran un
+script completo: Liquibase conserva orden, identidad y registro de cambios.
+## Corte histórico de PT_HS (`hu-19-dev`, 2026-10-30)
+
+El inventario de esa rama señaló `08_triggers/004_trg_after_alert_insert.sql` y
+`005_trg_after_reading_update_mv.sql` como archivos sin referencia en su changelog
+actual. La clasificación y el resto de los SQL no referenciados están en el
+[inventario histórico](historico/hu-19-dev_inventario-sql-historico.md). Esta
+observación corresponde a `hu-19-dev`; para el estado vigente, inspecciona los
+changelogs de la rama de `BD_HS` que se esté desplegando.

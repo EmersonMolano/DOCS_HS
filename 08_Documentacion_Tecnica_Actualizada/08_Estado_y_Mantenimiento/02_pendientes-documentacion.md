@@ -1,63 +1,59 @@
-﻿# Documentación pendiente y evidencias
+# Pendientes técnicos y evidencias
 
-Este listado separa las guías existentes de la evidencia que todavía no se ha
-obtenido. No marques una prueba como completada solo porque pasó un comando
-local o una simulación. Fecha de revisión: 18 de octubre de 2026.
+Revisión estática: **2026-11-03**. Este listado separa código documentado de
+resultados que todavía requieren evidencia. Un comando local o una simulación
+aislada no prueba un despliegue ni una placa física.
 
-## Prioridad alta: antes de aprobar el despliegue
+## Prioridad alta
 
-1. **Despliegue Cloudflare Pages + Render.** Crear una guía con rama y commit
-   desplegados, directorio raíz y comando de build, `VITE_API_URL`, `CORS_ORIGIN`,
-   `FRONTEND_URL`, `TRUST_PROXY_HOPS`, atributos de cookies y ruta de proxy/API.
-   No copiar valores secretos. Añadir una prueba en Chrome y otro navegador de
-   login → recarga → refresh → logout, con capturas de cabeceras redactadas.
-   Criterio de cierre: las cookies llegan y vuelven en las solicitudes; CSRF
-   funciona sin desactivarlo. Si los dominios distintos bloquean cookies de
-   terceros, documentar y verificar un proxy o dominios bajo el mismo sitio.
-2. **E2E por rol.** Ampliar [pruebas.md](../07_Pruebas_Seguridad_y_Calidad/01_pruebas.md) con casos reproducibles para
-   Owner, Guest y Administrator: permisos, hogar, vínculo/desvínculo, consumo,
-   PDF/Excel, alertas, soporte y cierre de sesión. Registrar entorno, datos
-   ficticios, resultado y evidencia; no usar cuentas reales.
-3. **Recuperación PostgreSQL.** [respaldo-postgresql.md](../02_Operacion_y_Despliegue/04_respaldo-postgresql.md)
-   explica el procedimiento. Falta adjuntar un registro de una restauración
-   ejecutada en una base aislada: fecha, versiones, comando sin contraseñas,
-   tiempo, conteos/consultas de validación y resultado. No subir el respaldo.
-4. **Matriz de variables de despliegue y secretos.** Documentar por entorno
-   quién configura cada variable de Render/Cloudflare/MQTT/Neon/Brevo, cuál es
-   obligatoria y cómo se verifica sin imprimir su valor. Incluir rotación de
-   claves filtradas y revocación de sesiones expuestas. No publicar `.env` real.
+1. **Alinear ramas y contratos entre monorepo y repositorios separados.** La
+   matriz de [estado actual](01_estado-actual.md) muestra ramas distintas.
+   PT_HS/hu-19-dev incluye cuatro deviceCode configurables; firmware publica
+   bajo un solo código activo por lectura; BD_HS/hu-23-dev reserva tres. Definir
+   el modelo deseado y alinear SQL, firmware, backend, frontend y ACL antes de
+   tratar esos repos como una versión única.
+2. **Despliegue Cloudflare Pages y Render.** Registrar rama/commit reales,
+   directorio raíz, comando de build, variables requeridas (sin sus valores),
+   CORS y ruta de API. Probar en navegador login, recarga, refresh, CSRF y
+   logout. No afirmar que los dominios/cookies están correctos sin evidencia
+   del navegador y panel de proveedores.
+3. **E2E por rol.** Ampliar [plan de pruebas](../07_Pruebas_Seguridad_y_Calidad/01_pruebas.md)
+   para Owner, Guest y Administrator: permisos, hogar, vínculo/desvínculo,
+   consumo, reportes, reglas/alertas, soporte y logout. Registrar entorno,
+   commit, datos ficticios y evidencias redactadas.
+4. **Restauración PostgreSQL.** La [guía de respaldo](../02_Operacion_y_Despliegue/04_respaldo-postgresql.md)
+   explica el procedimiento. Falta una restauración documentada en una base
+   aislada con versión, comandos sin contraseña, conteos/consultas de control y
+   resultado. No subir el respaldo.
+5. **Variables y secretos por entorno.** Mantener una matriz de nombres,
+   proveedor, obligatoriedad y método de verificación sin imprimir valores.
+   Rotar credenciales expuestas y revocar sesiones comprometidas fuera de este
+   documento. Nunca publicar archivos .env reales.
 
-## Prioridad media: calidad y mantenimiento
+## Prioridad media
 
-5. **Contrato OpenAPI completo.** [openapi.yaml](../04_Backend_y_API/openapi.yaml)
-   inventaría rutas, pero la mayoría todavía usa una respuesta genérica.
-   Añadir esquemas de request/response, parámetros, errores 400, 401, 403,
-   409 y 429, ejemplos redactados y permisos, empezando por autenticación,
-   dispositivos y hogares. Comparar cada ejemplo con controladores y pruebas.
-6. **Carga real y observabilidad.** La simulación de 300 clientes de
-   [pruebas.md](../07_Pruebas_Seguridad_y_Calidad/01_pruebas.md) no crea usuarios ni usa la base de datos. Diseñar
-   un ensayo en entorno aislado con cuentas ficticias, duración, concurrencia,
-   límites aceptables (p95, errores, CPU, memoria, pool PostgreSQL) y plan de
-   limpieza. Registrar resultados y versión del código.
-7. **Móvil y ESP32 físicos.** Completar [04_mobile.md](../05_Frontend_y_Movil/04_mobile.md)
-   e [iot.md](../06_IoT_y_Firmware/01_iot.md) con una matriz de teléfonos/Android/Expo Go probados y
-   una prueba nativa BLE separada: emparejamiento, Wi-Fi, MQTT, telemetría cada
-   cinco segundos, pérdida de red, desvinculación y retorno de BLE. Anotar
-   versión de firmware y calibración del caudalímetro.
-8. **Registro de riesgo de dependencias.** Mantener por paquete/advisory los 15
-   hallazgos altos del frontend, su alcance (build, móvil o web), versión
-   instalada, corrección compatible con SDK 57, decisión y fecha de revisión.
-   No afirmar que `npm audit fix --force` es una solución validada.
-9. **Correo transaccional.** Crear un procedimiento breve para verificar Brevo
-   sin exponer claves: remitente autorizado, variables requeridas, prueba de
-   envío con destinatario de prueba, consulta de logs de proveedor y respuesta
-   ante fallo. Distinguir aceptación HTTP del envío de entrega en bandeja.
+6. **OpenAPI.** Completar esquemas de request/response, parámetros, errores y
+   permisos; empezar por autenticación, hogares y dispositivos y cotejar con
+   controladores y pruebas.
+7. **Carga y observabilidad.** La simulación de clientes virtuales no usa
+   usuarios reales ni PostgreSQL. Diseñar un ensayo aislado con cuentas
+   ficticias, duración, concurrencia, límites p95, errores, CPU, memoria y pool;
+   registrar limpieza y SHA.
+8. **Prueba física móvil/ESP32.** Ejecutar build móvil nativo para BLE y
+   verificar provisioning, Wi-Fi, MQTT/TLS, telemetría, pérdida de red,
+   medición/vigilancia, desvinculación y retorno de BLE. Registrar teléfono,
+   Android, firmware, broker y calibración.
+9. **Dependencias.** Volver a ejecutar audit en la rama candidata y registrar
+   paquetes/advisories actuales, alcance y decisión compatible con Expo SDK 57.
+   Los conteos del informe de octubre son históricos y no se deben citar como
+   estado actual sin nueva ejecución.
+10. **Correo transaccional.** Documentar un envío real con remitente autorizado,
+    variables presentes sin revelar valores, destinatario de prueba, log del
+    proveedor y recepción en buzón. Distinguir aceptación HTTP de entrega.
 
-## Regla de cierre
+## Criterio de cierre
 
-Cada evidencia debe indicar fecha, rama/commit, entorno, comando o pasos,
-resultado esperado y real, y ubicación de logs o capturas redactados. Una
-prueba pendiente se documenta como pendiente, no como aprobada. Cuando se
-cierre un punto, actualizar también [estado-actual.md](01_estado-actual.md) y el
-documento del componente correspondiente.
-
+Cada evidencia debe registrar fecha, rama y commit, entorno, procedimiento,
+resultado esperado y real, y ubicación de logs/capturas redactados. Al cerrar un
+punto, actualizar [estado-actual.md](01_estado-actual.md) y la guía del
+componente. No marcar como completa una validación pendiente.

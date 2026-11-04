@@ -1,3 +1,5 @@
+> **Registro histórico de HU-16.** Este documento describe la rama/implementación de esa HU. Las variables y campos Cloudflare/Render son una guía de configuración de aquel corte, no una lectura de los paneles actuales. Contrasta con [estado actual](01_estado-actual.md) y con el commit desplegado antes de usarlo.
+
 # HU-16: alertas, recomendaciones y preparacion del despliegue
 
 ## Cambios incluidos

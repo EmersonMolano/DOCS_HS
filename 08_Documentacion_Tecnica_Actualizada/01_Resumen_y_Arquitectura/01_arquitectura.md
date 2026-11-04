@@ -1,47 +1,74 @@
-# Arquitectura
+# Arquitectura de HidroSmart
 
-```text
-ESP32 ──BLE──> navegador ──HTTPS/API──> frontend React
-  │                                     │
-  └──Wi-Fi/MQTT──> Mosquitto ──> backend Express ──> PostgreSQL
-                                  │
-                                  └──> reportes, alertas y auditoría
+Vista lógica de la copia integrada PT_HS/hu-19-dev revisada el 2026-11-03. Las ramas de componentes separadas no están sincronizadas con esa revisión; el cuadro de fuentes en [Resumen del sistema](00_Resumen_del_Sistema.md) identifica cada checkout.
+
+## Vista de contexto
+
+```mermaid
+flowchart LR
+  browser[Usuario / navegador] -->|HTTPS, cookie y CSRF| pages[Web React / Pages]
+  pages -->|REST HTTPS| api[API Express / Render]
+  mobile[Cliente Expo / React Native] -->|REST HTTPS| api
+  mobile -.->|BLE durante aprovisionamiento| esp[ESP32 + sensor]
+  browser -.->|BLE en cliente compatible| esp
+  esp -->|Wi-Fi + MQTT/TLS| broker[Flespi]
+  api <-->|MQTT: telemetría, estado y comandos| broker
+  api -->|SQL con TLS| db[(PostgreSQL / Neon)]
+  api -->|API HTTPS| mail[Brevo]
+  local[Docker local] -->|API y datos de desarrollo| localApi[Backend + PostgreSQL]
+  local -->|broker local únicamente| mosq[Mosquitto]
+  esp -.->|sólo si se configura localmente| mosq
 ```
 
-## Capas y responsabilidades
+## Límites de los componentes
 
-| Capa | Responsabilidad principal |
+| Capa | Responsabilidad |
 | --- | --- |
-| ESP32 | Lee pulsos, calcula caudal/consumo, conserva Wi-Fi en NVS, anuncia BLE cuando no está vinculado y publica MQTT. |
-| MQTT | Transporta telemetría, estados de conexión y comandos de vinculación/desvinculación. |
-| Backend | Autentica, verifica permisos, procesa MQTT, coordina hogares y dispositivos, genera reportes. |
-| PostgreSQL | Guarda datos operativos; las migraciones Liquibase, funciones y RLS son la fuente de verdad de persistencia. |
-| Frontend | Presenta datos y realiza llamadas a la API. La configuración BLE se ejecuta desde el navegador compatible. |
-| Móvil | Empaqueta la experiencia web en un cliente Expo/React Native y añade el puente BLE nativo. |
+| Cliente web/móvil | Interfaz, solicitudes REST autenticadas y gestión de flujos del usuario. BLE depende del navegador o de una compilación móvil con módulo nativo. |
+| API | Valida sesión, CSRF, permisos y reglas; coordina hogares, dispositivos, reportes y soporte; procesa MQTT y solicita correo a Brevo. |
+| Broker | Transporta mensajes. Flespi es el destino TLS documentado para producción; Mosquitto es el servicio de desarrollo local. |
+| PostgreSQL | Persiste entidades, lecturas, auditoría y reglas. Las migraciones Liquibase son la fuente del esquema; RLS y funciones limitan acceso. |
+| ESP32 | Lee pulsos, calcula caudal, se aprovisiona por BLE y comunica telemetría/estado por Wi-Fi y MQTT. |
 
-## Flujos principales
+## Flujo de identidad y vinculación
 
-1. El usuario inicia sesión; la API coloca cookies `HttpOnly` de sesión y una
-   cookie CSRF. El frontend no almacena JWT en `sessionStorage`.
-2. Un propietario vincula un código lógico preasignado a su hogar. El ESP32
-   informa su `hardwareId` y el backend confirma la asociación por MQTT.
-3. Mientras no hay hogar asociado, el ESP32 ofrece BLE para recibir Wi-Fi y el
-   host MQTT. Tras `confirm_link`, conserva la red, detiene BLE y publica cada
-   cinco segundos.
-4. El backend normaliza cada mensaje MQTT, deduplica por `mqttMessageId` y lo
-   inserta mediante la ruta de ingesta autorizada.
-5. Dashboard, consumo, alertas y reportes consultan la API; el backend aplica
-   permisos y el contexto de usuario llega a PostgreSQL para RLS.
-6. Al desvincular, el backend publica `unlink`; el ESP32 vuelve a habilitar BLE
-   sin olvidar la red Wi-Fi guardada.
+1. El usuario obtiene un hogar y una membresía con permisos.
+2. Vincula un deviceCode lógico preasignado. El código debe existir en el conjunto de datos de la versión de base de datos usada.
+3. La placa reporta su hardwareId. El backend valida la asociación y transmite el comando correspondiente por MQTT.
+4. Para configurar la red, un cliente BLE compatible entrega la configuración al ESP32; BLE no es el canal de telemetría.
+5. La desvinculación elimina el enlace hogar-dispositivo y solicita reactivar BLE; la retención de Wi-Fi depende del firmware/configuración.
 
-## Decisiones vigentes
+## Flujo de medición y alertas
 
-- No se solicita IP manual al usuario final: el firmware recibe un host MQTT
-  de red estable durante el aprovisionamiento.
-- `hardwareId` identifica físicamente la placa; `deviceCode` identifica el
-  dispositivo lógico y es el que se vincula a un hogar.
-- Docker se usa para la pila local. PostgreSQL y la API se exponen solo en
-  `localhost`; el frontend consume la API por Nginx.
-- Web y móvil comparten el código de la aplicación; el móvil requiere una
-  compilación de desarrollo para funciones nativas como BLE.
+```mermaid
+sequenceDiagram
+  participant S as Sensor/ESP32
+  participant B as Flespi MQTT
+  participant A as Backend
+  participant D as PostgreSQL
+  S->>B: telemetry/status con deviceCode y mqttMessageId
+  B->>A: entrega por topic autorizado
+  A->>A: valida topic, payload, asociación e idempotencia
+  A->>D: persiste lectura y evalúa regla
+  D-->>A: lectura/alerta
+  A-->>B: comandos si el flujo los requiere
+  B-->>S: entrega del comando MQTT
+```
+
+El intervalo esperado de publicación configurado es de aproximadamente cinco segundos; la conectividad real puede retrasar o perder mensajes. Una respuesta del broker no demuestra que la API haya almacenado cada lectura.
+
+## Modo de vigilancia
+
+La opción de pausar la contabilización de consumo no es un interruptor eléctrico. En la versión de integración revisada, **measurementEnabled=false** congela el aumento de litros, pero deja el ESP32, el sensor, Wi-Fi y MQTT en marcha para que el backend evalúe el flujo y las reglas de fuga.
+
+## Seguridad documentada
+
+- Sesión web en cookies y token CSRF para operaciones mutables.
+- Autorización en el backend y aislamiento de datos en PostgreSQL.
+- TLS para las conexiones externas declaradas en la guía de despliegue.
+- Credenciales de broker, correo y base de datos deben residir en secretos del entorno; no incluir valores en documentos.
+- Los diagramas son contratos de diseño y no reemplazan validación de despliegue ni pruebas con hardware.
+
+## Desarrollo local frente a servicios externos
+
+Docker ofrece componentes locales de desarrollo. No se debe confundir la dirección interna de un contenedor con un host accesible desde el ESP32. Para una placa física, el broker/servidor debe ser alcanzable desde su red. Consulta [Operación local](../02_Operacion_y_Despliegue/02_operacion-local.md) y [Despliegue](../02_Operacion_y_Despliegue/03_despliegue.md).

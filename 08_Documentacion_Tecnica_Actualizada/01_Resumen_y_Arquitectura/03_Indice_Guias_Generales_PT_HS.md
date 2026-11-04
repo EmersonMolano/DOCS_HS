@@ -1,8 +1,6 @@
 ﻿# Documentación de HidroSmart
 
-Esta carpeta contiene únicamente la documentación operativa vigente. Los
-documentos históricos, auditorías con fecha y bitácoras antiguas se retiraron
-para evitar que compitan con el código actual; el historial permanece en Git.
+Esta carpeta organiza guías operativas por componente. También conserva diagnósticos fechados y notas históricas, etiquetados como tales; no deben interpretarse como estado actual sin revisar su fecha y fuente.
 
 ## Guías generales
 
@@ -19,7 +17,7 @@ para evitar que compitan con el código actual; el historial permanece en Git.
 | [Estado actual](../08_Estado_y_Mantenimiento/01_estado-actual.md) | Capacidades verificadas y trabajo pendiente. |
 | [Diagnóstico de autenticación y despliegue (20 oct 2026)](../02_Operacion_y_Despliegue/05_diagnostico-estabilizacion-despliegue-2026-10-20.md) | Evidencia de CORS/CSRF, pruebas locales, bloqueo de Pages y siguientes pasos. |
 | [Documentación pendiente](../08_Estado_y_Mantenimiento/02_pendientes-documentacion.md) | Evidencias y guías que faltan antes de producción. |
-| [HU-16: alertas, web, MQTT y despliegue](../08_Estado_y_Mantenimiento/03_hu-16-alertas-web-mqtt-despliegue.md) | Cambios incluidos, migraciones, variables seguras, Cloudflare Pages y comprobaciones. |
+| [HU-16: registro histórico de alertas, web, MQTT y despliegue](../08_Estado_y_Mantenimiento/03_hu-16-alertas-web-mqtt-despliegue.md) | Cambios incluidos, migraciones, variables seguras, Cloudflare Pages y comprobaciones. |
 
 ## Guías IoT complementarias
 
@@ -40,3 +38,8 @@ código, pruebas ejecutables, archivos `.env.example` y, por último, esta
 documentación. Toda modificación funcional debe ajustar el documento de su
 componente y eliminar instrucciones que dejen de aplicar.
 
+
+
+## Precedencia de fuentes y estado de ramas
+
+Al corte 2026-11-03, PT_HS/hu-19-dev es el monorepo integrado revisado; BD_HS/hu-23-dev, BK_HS/hu-15-dev, FT_HS/hu-16-staging y Firmaware_HS/hu-03-dev son checkouts separados con diferencias de contenido. Consulta [Resumen del sistema](00_Resumen_del_Sistema.md) antes de asumir que las ramas están sincronizadas. La fuente técnica es el código y las migraciones de la rama indicada. Los documentos académicos de 01_Documentacion_del_Proyecto son conversiones de sus fuentes y pueden describir propuestas o versiones previas.

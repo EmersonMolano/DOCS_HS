@@ -32,3 +32,10 @@ La documentación técnica incorporada desde `PT_HS` está reorganizada por tema
 ## Regla de mantenimiento
 
 Los documentos numerados del `01` al `07` conservan el material académico, histórico y de soporte del proyecto. La carpeta `08` es la referencia técnica operativa: cuando cambie la implementación, actualiza allí la guía correspondiente y conserva las versiones anteriores en su ubicación histórica cuando sea necesario.
+
+
+## Corte técnico consultado
+
+La revisión documental local del 2026-11-03 usa PT_HS/hu-19-dev como integración y contrasta las copias separadas BD_HS/hu-23-dev, BK_HS/hu-15-dev, FT_HS/hu-16-staging y Firmaware_HS/hu-03-dev. No están sincronizadas entre sí; cada guía identifica qué rama describe. El detalle está en [Resumen del sistema](08_Documentacion_Tecnica_Actualizada/01_Resumen_y_Arquitectura/00_Resumen_del_Sistema.md).
+
+Los documentos académicos y diagramas dentro de NO/antiguo se conservan como referencia. La documentación técnica de la carpeta 08 es la guía operativa y debe actualizarse con el código y las migraciones de la rama correspondiente.

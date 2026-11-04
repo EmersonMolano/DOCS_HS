@@ -214,3 +214,15 @@ Después de cambiar esta capa, prueba al menos:
 4. Owner, Guest y Administrator no ven ni editan filas de hogares ajenos.
 5. liquibase validate y status --verbose muestran el orden esperado antes de
    aplicar update.
+
+## Changeset reciente de estado de medición
+
+`01_grants/056_device_measurement_state.sql` revoca la ejecución pública de
+`device.fn_record_device_measurement_state(...)` y concede su ejecución al rol
+de aplicación. Está asociado a la etiqueta `measurement-toggle-v1`; el permiso
+se limita a persistir la confirmación de medición del dispositivo. No concede
+al rol de ingesta lectura general de hogares ni acceso directo adicional a la
+tabla.
+
+Antes de afirmar el permiso efectivo en un entorno, comprueba el estado de
+Liquibase y los grants de ese entorno.

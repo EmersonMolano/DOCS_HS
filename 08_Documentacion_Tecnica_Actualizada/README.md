@@ -1,6 +1,8 @@
 # Documentación técnica de HidroSmart
 
-Esta sección reúne la documentación técnica vigente de `PT_HS`, organizada por tema y no por la estructura interna del código.
+Esta sección agrupa guías por componente y tarea. El corte de revisión actual
+se encuentra en [Resumen del sistema](01_Resumen_y_Arquitectura/00_Resumen_del_Sistema.md)
+y [Estado actual](08_Estado_y_Mantenimiento/01_estado-actual.md).
 
 ## Ruta recomendada
 
@@ -19,10 +21,15 @@ Esta sección reúne la documentación técnica vigente de `PT_HS`, organizada p
 ## Criterio de organización
 
 - Los documentos se agrupan por tarea y componente.
-- Los archivos `00_` son índices o puntos de entrada.
-- Se conservaron los documentos originales; solo se corrigieron nombres de ubicación y enlaces relativos para que la copia sea navegable.
-- Los documentos académicos, diagramas y anexos continúan en las carpetas `01` a `07` del repositorio.
+- Los archivos 00_ son índices o puntos de entrada.
+- Los documentos académicos, diagramas y anexos permanecen en las carpetas 01 a 07.
+- La carpeta 08 contiene guías operativas y notas con fecha; los documentos
+  fechados no deben leerse como estado actual sin comprobar la fecha y la rama.
 
 ## Orden de precedencia
 
-Cuando exista una diferencia entre una guía y el sistema implementado, prevalecen las migraciones, el código y las pruebas ejecutables. Esta carpeta es una referencia documental sincronizada desde `PT_HS`; al cambiar el proyecto, actualiza también la guía correspondiente.
+Cuando una guía y el sistema difieren, prevalecen el código, las migraciones y
+las pruebas de la rama que se está evaluando. Los checkouts del monorepo y de
+los repositorios separados no están coordinados automáticamente; cada documento
+debe indicar qué copia describe. Las pruebas fechadas son evidencia histórica,
+no garantía de que pasen en el HEAD actual.

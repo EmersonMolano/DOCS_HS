@@ -1,12 +1,14 @@
-﻿# Firmware ESP32
+# Firmware ESP32
 
 ## Dispositivo lógico
 
-La placa puede seleccionar uno de cuatro códigos lógicos preasignados:
-`HS-7A3F91C8D2E4`, `HS-B6E04D79A153`, `HS-2C8A5F01E7B9` y
-`HS-141F47470968`. Publica telemetría en el ID activo y acepta comandos para
-cualquiera de los cuatro. El `hardwareId` físico se obtiene del eFuse y sigue
-siendo independiente del código lógico activo.
+El firmware admite cuatro códigos lógicos preasignados (`HS-7A3F91C8D2E4`,
+`HS-B6E04D79A153`, `HS-2C8A5F01E7B9` y `HS-141F47470968`), pero cada ESP32
+mantiene solo un código activo a la vez. Publica cada lectura una sola vez en
+el topic `telemetry` de ese ID. Los otros códigos son identidades permitidas;
+no representan cuatro lecturas simultáneas desde una misma placa. El
+`hardwareId` físico se obtiene del eFuse y permanece independiente del código
+lógico activo.
 
 La ACL del token de Flespi debe permitir publicar `telemetry` y `status` para
 el ID activo y suscribirse a `commands` para los cuatro IDs. El backend usa su

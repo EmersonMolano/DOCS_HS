@@ -128,3 +128,22 @@ de reversión disponibles en 05_rollbacks/02_dml/04_patches.
 - Reversión: los rollbacks existentes están bajo
   05_rollbacks/02_dml. Revísalos antes de aplicarlos, especialmente los que
   eliminan catálogos o asignaciones en uso.
+
+## Reconciliación con el inventario actual
+
+La revisión de `BD_HS/hu-23-dev` confirma que `03_upserts/001_preassigned_esp32_device_codes.sql`
+contiene **tres** códigos lógicos, no cuatro:
+
+- `HS-7A3F91C8D2E4`
+- `HS-B6E04D79A153`
+- `HS-2C8A5F01E7B9`
+
+Se insertan con estado `PENDING`, sin hogar y con `ON CONFLICT (code) DO NOTHING`.
+El código lógico identifica el equipo inventariado; el `hardwareId` físico se
+reclama durante el aprovisionamiento. La cantidad de códigos preasignados no
+indica cuántas placas están físicamente conectadas ni vinculadas.
+
+El changeset final `013_hidrosmart_mini_defaults.sql` define los valores de
+referencia para hogares nuevos, pero conserva tarifas personalizadas. Los
+valores efectivos deben confirmarse en el SQL de esa migración y en la base de
+datos del entorno; esta guía no presupone una tarifa comercial desplegada.

@@ -55,3 +55,16 @@ Para el inventario de roles y políticas, consulta
 [`03_dcl.md`](03_dcl.md) y los SQL versionados. Esta guía no promete que una
 política exista solo por aparecer en el diagrama: la migración aplicada es la
 fuente de verdad.
+
+## Estado de medición y autorización
+
+La migración `measurement-toggle-v1` agrega un estado de medición confirmado
+por dispositivo. `TRUE` contabiliza lecturas normalmente; `FALSE` pausa el
+conteo, mientras las lecturas y señales de caudal/pulsos pueden seguir entrando
+para vigilar fugas. Esta bandera no es un mecanismo para cortar energía ni
+cerrar físicamente una válvula.
+
+La función de persistencia exige que el dispositivo exista y está activo,
+rechaza eventos fuera de orden y limita timestamps futuros. Su ejecución se
+concede mediante el changeset `03_dcl/01_grants/056_device_measurement_state.sql`.
+La regla de fuga requiere contexto autorizado al evaluar el dispositivo.

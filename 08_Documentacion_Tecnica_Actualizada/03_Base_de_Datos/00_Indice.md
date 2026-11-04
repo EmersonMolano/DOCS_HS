@@ -1,4 +1,4 @@
-﻿# Base de datos: modelo y migraciones
+# Base de datos: modelo y migraciones
 
 ## Dominios principales
 
@@ -40,7 +40,7 @@ Los códigos lógicos preasignados están en `02_dml/03_upserts`; se usan una ve
 por placa y no reemplazan el `hardwareId` físico.
 
 Para backup y recuperación consulta
-[../../docs/respaldo-postgresql.md](../02_Operacion_y_Despliegue/04_respaldo-postgresql.md).
+[Respaldo y recuperación PostgreSQL](../02_Operacion_y_Despliegue/04_respaldo-postgresql.md).
 
 ## Guías detalladas por capa
 
@@ -53,7 +53,7 @@ Para backup y recuperación consulta
   grants y políticas de aislamiento por filas.
 - [04_tcl: operaciones manuales](04_tcl.md). Describe mantenimiento,
   recuperación de usuario y etiquetas de versión fuera del despliegue normal.
-- [05_rollbacks: reversión controlada](05_rollbacks.md). Cataloga los 194
+- [05_rollbacks: reversión controlada](05_rollbacks.md). Cataloga los 200
   scripts de reversión externos y sus precauciones de uso.
 
 ## Guías transversales
@@ -65,3 +65,13 @@ Para backup y recuperación consulta
 - [08_indices-y-retencion](08_indices-y-retencion.md): familias de índices,
   agregados, procesos de limpieza observados y asuntos de retención pendientes.
 
+## Modelo vigente
+
+- [Diccionario físico vigente](09_diccionario-implementado.md): tablas, claves primarias y referencias extraídas de las migraciones actuales.
+- [Modelo entidad-relación](06_modelo-entidad-relacion.md): dominios y relaciones principales.
+
+## Corte histórico recibido de PT_HS
+
+El [inventario de SQL histórico de `hu-19-dev` (2026-10-30)](historico/hu-19-dev_inventario-sql-historico.md)
+conserva el análisis del monorepo PT_HS. Es una fotografía de esa rama y no
+sustituye el inventario/revisión más reciente de `BD_HS/hu-23-dev` documentado arriba.

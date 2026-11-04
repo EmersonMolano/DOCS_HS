@@ -1,4 +1,4 @@
-﻿# Índices, agregados y retención
+# Índices, agregados y retención
 
 Los índices se crean principalmente en la capa DDL, con optimizaciones adicionales en
 migraciones posteriores. Su objetivo es acelerar filtros y uniones frecuentes;
@@ -67,4 +67,3 @@ filas afectadas, usa lotes y registra la operación. No añadas un `DELETE` ni
 reduzcas retención en una guía como si ya estuviera desplegado: cualquier
 cambio necesita migración, autorización del responsable de datos y prueba de
 restauración.
-

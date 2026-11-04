@@ -1,32 +1,39 @@
-﻿# Base de datos HidroSmart
+# Componente de base de datos HidroSmart
 
-PostgreSQL versionado con Liquibase. Las migraciones son la fuente de verdad
-del esquema, catálogos, funciones, roles y políticas RLS.
+PostgreSQL persiste cuentas, hogares, dispositivos, lecturas, alertas, soporte,
+auditoría y privacidad. Liquibase versiona los cambios; los archivos de
+`BD_HS` son la fuente de verdad de la estructura, los datos iniciales y los
+permisos declarados. Esta descripción refleja una revisión estática de la rama
+local `BD_HS/hu-23-dev` al 2026-11-03; no certifica qué migraciones están
+aplicadas en cada entorno.
 
-## Estructura
+## Esquemas de dominio
 
-| Ruta | Propósito |
+| Esquema | Responsabilidad |
 | --- | --- |
-| `changelog-master.yaml` | Punto de entrada de Liquibase. |
-| `01_ddl` | Esquemas, tablas, tipos, funciones, vistas, índices y triggers. |
-| `02_dml` | Catálogos, permisos funcionales, datos iniciales y códigos IoT preasignados. |
-| `03_dcl` | Roles PostgreSQL, grants y políticas RLS. |
-| `05_rollbacks` | Referencias de rollback manual; no se ejecutan durante `update`. |
+| `user_account` | Identidades, perfiles, credenciales, verificación, sesiones, MFA, roles y permisos funcionales. |
+| `preference` | Catálogos de idioma, moneda y tema; preferencias por usuario. |
+| `home` | Hogares, miembros, funciones, solicitudes, metas y modo vacaciones. |
+| `device` | Dispositivos, historial, telemetría, calibración y actuadores. |
+| `consumption` | Lecturas IoT, históricos, resúmenes y predicciones. |
+| `alert_rate` | Umbrales, reglas, eventos, notificaciones, estratos y tarifas. |
+| `analytics_support` | Recomendaciones, reportes, categorías, tickets y respuestas. |
+| `audit` | Eventos de auditoría y errores. |
+| `privacy` | Consentimientos y solicitudes ARCO. |
 
-## Ejecutar migraciones
+## Responsabilidades
 
-Desde la raíz del repositorio, con la pila de datos levantada:
+- `01_ddl`: define objetos y restricciones de PostgreSQL.
+- `02_dml`: carga catálogos, permisos funcionales, referencias y códigos lógicos iniciales.
+- `03_dcl`: declara roles técnicos, grants, revocaciones y políticas RLS.
+- `04_tcl`: contiene operaciones manuales de mantenimiento y recuperación; no es parte del `update` normal.
+- `05_rollbacks`: catálogo de reversiones vinculadas a changesets concretos, no un changelog que se aplique en bloque.
 
-```powershell
-docker compose --env-file .env up -d postgres db-bootstrap
-docker compose --env-file .env --profile tooling run --rm liquibase validate
-docker compose --env-file .env --profile tooling run --rm liquibase status --verbose
-docker compose --env-file .env --profile tooling run --rm liquibase update
-```
+El flujo principal de telemetría valida el dispositivo, la asociación activa con
+el hogar, el identificador idempotente del mensaje y sus métricas antes de
+persistir la lectura. La regla de negocio de medición permite pausar la
+contabilización sin interrumpir la telemetría usada para vigilar fugas.
 
-No edites un changeset aplicado. Para cambiar el esquema crea un changeset
-nuevo, actualiza su changelog correspondiente y valida en una base local nueva.
-
-Consulta [docs/README.md](00_Indice.md) para modelo, seguridad y reglas de
-migración.
-
+Para el inventario relacional actualizado consulta
+[`09_diccionario-implementado.md`](09_diccionario-implementado.md), y para la
+vista conceptual [`06_modelo-entidad-relacion.md`](06_modelo-entidad-relacion.md).

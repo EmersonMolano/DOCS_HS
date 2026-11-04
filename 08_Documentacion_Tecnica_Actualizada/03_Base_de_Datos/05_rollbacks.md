@@ -24,7 +24,7 @@ changesets usan rollback en línea y otros no tienen rollback externo.
 
 ## Cobertura
 
-Hay 194 scripts de rollback externos. Que un changeset no aparezca
+Hay 200 scripts de rollback externos. Que un changeset no aparezca
 aquí no significa necesariamente que no tenga reversión: puede tenerla escrita
 en línea en su changelog. Si no existe ni rollback externo ni rollback en línea,
 la migración requiere un plan manual antes de revertirse.
@@ -321,3 +321,29 @@ Para encontrar el contexto de un rollback, abre el archivo de igual nombre sin
 el sufijo .rollback.sql en la capa original y revisa su changeset. Después de
 la operación, ejecuta liquibase validate, verifica el estado de la aplicación
 y conserva evidencia del backup, del SQL aplicado y del resultado.
+
+## Reconciliación de inventario (2026-11-03)
+
+En el checkout local de `BD_HS/hu-23-dev` hay 200 archivos `.sql` bajo
+`05_rollbacks`. El conteo incluye reversas externas; no incluye los rollback
+escritos en línea dentro de los changelogs. Cambiar el número de archivos no
+significa que todos sean aplicables a la misma base ni que el entorno tenga
+esos changesets instalados.
+
+La capa más reciente agrega seis archivos de reversa al inventario. Sus rutas
+en el checkout `BD_HS/hu-23-dev` son:
+
+- `05_rollbacks/01_ddl/04_alter/034_device_measurement_state.rollback.sql`
+- `05_rollbacks/01_ddl/06_functions/064_fn_home_creation_default_alerts.rollback.sql`
+- `05_rollbacks/01_ddl/06_functions/065_fn_record_device_measurement_state.rollback.sql`
+- `05_rollbacks/01_ddl/06_functions/066_fn_leak_watch_measurement_paused.rollback.sql`
+- `05_rollbacks/01_ddl/06_functions/067_fn_default_leak_detection_rule.rollback.sql`
+- `05_rollbacks/03_dcl/01_grants/056_device_measurement_state.rollback.sql`
+
+Cada archivo corresponde a un changeset o grant específico; revisa el original
+antes de invocarlo. En particular, revertir la regla por defecto no restaura
+automáticamente el estado de hogares que ya hayan editado sus reglas.
+
+El inventario de PT_HS `hu-19-dev` (2026-10-30) se conserva como
+[corte histórico](historico/hu-19-dev_inventario-sql-historico.md); sus conteos
+no deben mezclarse con los de `BD_HS/hu-23-dev` descritos en esta guía.

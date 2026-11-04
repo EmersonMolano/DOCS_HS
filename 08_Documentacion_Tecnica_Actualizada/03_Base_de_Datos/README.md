@@ -12,3 +12,12 @@ Modelo, migraciones Liquibase, seguridad de datos y mantenimiento de PostgreSQL.
 - [Modelo entidad-relación](06_modelo-entidad-relacion.md)
 - [RLS y seguridad](07_rls-y-seguridad.md)
 - [Índices y retención](08_indices-y-retencion.md)
+
+## Modelo vigente
+
+- [Diccionario físico vigente](09_diccionario-implementado.md)
+
+## Cortes históricos
+
+- [Inventario SQL histórico de PT_HS — `hu-19-dev` (2026-10-30)](historico/hu-19-dev_inventario-sql-historico.md).
+  Fotografía de esa rama; no reemplaza la documentación vigente de `BD_HS/hu-23-dev`.
