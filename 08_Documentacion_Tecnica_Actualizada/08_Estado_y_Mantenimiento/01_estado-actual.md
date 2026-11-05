@@ -63,3 +63,25 @@ El informe previo en este repositorio registra resultados de pruebas del **18 de
 5. Repetir audit y suites en los commits candidatos y registrar SHA, entorno, comandos y resultados.
 
 Consulta [pendientes y evidencias](02_pendientes-documentacion.md) para los criterios de cierre.
+
+## Actualización de promoción — 2026-11-05
+
+Se verificaron los siguientes `main` remotos después de promover los cambios:
+
+| Repositorio | `main` | Promoción comprobada |
+| --- | --- | --- |
+| PT_HS | `09c9e4c` | `hu-20-dev` → `hu-20-qa` → `hu-20-staging` → `hu-20-main` → `main` |
+| Firmaware_HS | `2e5cfca` | `hu-03-dev` → `hu-03-qa` → `hu-03-staging` → `hu-03-main` → `main` |
+| BD_HS | `42ee03b` | La rama HU-23 ya estaba integrada en `main`; no requería una nueva promoción. |
+| BK_HS | `190263d` | La rama HU-15 ya estaba integrada en `main`; no requería una nueva promoción. |
+| FT_HS | `91a5ef3` | `main` ya contenía la integración HU-20. |
+| DOCS_HS | `44bb611` | Las actualizaciones documentales locales se integraron en `main`. |
+
+La entrega SENA `ADSO-3145555` también recibió el paquete de diseño en `main`, commit `993c5b2`.
+La promoción verifica referencias Git, no compilación, despliegue ni operación física.
+
+### Divergencia de migraciones que requiere conciliación
+
+No copiar cambiosets de BD_HS a PT_HS ni al contrario sin una migración de compatibilidad revisada. El changeset de estado de medición conserva IDs distintos (`20261028-device-measurement-state` en PT_HS y `20261030-device-measurement-state` en BD_HS). La regla de fuga también usa IDs y rutas distintas (`20261030-default-leak-detection-rule`/`073_fn_default_leak_detection_rule.sql` en PT_HS y `20261030-fn-default-leak-detection-rule`/`067_fn_default_leak_detection_rule.sql` en BD_HS). Liquibase identifica los cambios por ID, autor y ruta; una aplicación cruzada puede volver a ejecutar SQL.
+
+En esta promoción no se ejecutó PlatformIO, CI, pruebas automatizadas, Neon, Flespi ni una placa física. Mantén esos puntos en la sección **No verificado en este corte** hasta registrar evidencia nueva.
