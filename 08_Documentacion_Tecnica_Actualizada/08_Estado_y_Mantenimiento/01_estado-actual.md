@@ -75,7 +75,7 @@ Se verificaron los siguientes `main` remotos después de promover los cambios:
 | BD_HS | `42ee03b` | La rama HU-23 ya estaba integrada en `main`; no requería una nueva promoción. |
 | BK_HS | `190263d` | La rama HU-15 ya estaba integrada en `main`; no requería una nueva promoción. |
 | FT_HS | `91a5ef3` | `main` ya contenía la integración HU-20. |
-| DOCS_HS | `44bb611` | Las actualizaciones documentales locales se integraron en `main`. |
+| DOCS_HS | `44bb611` antes de esta nota | Las actualizaciones documentales locales se integraron en `main`; esta nota se publicó después. |
 
 La entrega SENA `ADSO-3145555` también recibió el paquete de diseño en `main`, commit `993c5b2`.
 La promoción verifica referencias Git, no compilación, despliegue ni operación física.
