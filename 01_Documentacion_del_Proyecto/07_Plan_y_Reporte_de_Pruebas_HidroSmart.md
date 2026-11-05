@@ -124,7 +124,7 @@ Este documento separa evidencia ya registrada en el repositorio de pruebas que a
 <td><p>T-08</p></td>
 <td><p>Alertas/metas</p></td>
 <td><p>Regla genera evento seg&#250;n umbral.</p></td>
-<td><p>SMTP real pendiente.</p></td>
+<td><p>En el corte hist&#243;rico de este reporte (2026-10-09), SMTP real pendiente; el corte t&#233;cnico 2026-11-03 documenta Brevo, con entrega integral a&#250;n por evidenciar.</p></td>
 </tr>
 <tr>
 <td><p>T-09</p></td>
@@ -198,3 +198,9 @@ Las pruebas físicas de calibración con volumen conocido, carga y autonomía qu
 <strong>Nota de control documental. </strong>Fuentes: docs/estado-verificado-2026-09-26.md, docs/estado-integral.md, docs/auditoria-estado-2026-09-23.md y scripts/tests del repositorio. Las pruebas no fueron ejecutadas de nuevo durante la elaboración documental.
 
 <!-- footer: HidroSmart | DOC-07 | Versión documental consolidada 1.0 | Página PAGE -->
+
+## Actualización técnica — 2026-11-03
+
+La rama PT_HS/hu-19-dev (73fc47c) contiene integración de correo transaccional con la API HTTPS de Brevo y pruebas de código para el emisor. Eso no certifica que Render tenga variables válidas ni que cada correo haya llegado al destinatario. Para cerrar la prueba, registrar por cada flujo activo el commit, ambiente, solicitud, messageId, estado en Brevo y resultado del enlace. Los avisos de fuga, consumo, metas y desconexión se mantienen fuera del alcance de entrega hasta confirmar un disparador conectado.
+
+El [contrato MQTT del firmware](../08_Documentacion_Tecnica_Actualizada/06_IoT_y_Firmware/06_Contrato_MQTT.md) documenta Flespi/TLS y Mosquitto para desarrollo. Esto no equivale a una prueba reciente de la ACL, del token remoto ni de una placa física. Conserva como evidencia histórica los resultados fechados de las secciones anteriores.

@@ -9,9 +9,10 @@ aislada no prueba un despliegue ni una placa física.
 1. **Alinear ramas y contratos entre monorepo y repositorios separados.** La
    matriz de [estado actual](01_estado-actual.md) muestra ramas distintas.
    PT_HS/hu-19-dev incluye cuatro deviceCode configurables; firmware publica
-   bajo un solo código activo por lectura; BD_HS/hu-23-dev reserva tres. Definir
-   el modelo deseado y alinear SQL, firmware, backend, frontend y ACL antes de
-   tratar esos repos como una versión única.
+   bajo un solo código activo por placa; BD_HS/hu-23-dev reserva tres mientras
+   el firmware y SQL integrados en PT_HS documentan cuatro. Alinear SQL,
+   firmware, backend, frontend y ACL antes de tratar esos repos como una versión
+   única; una lectura no debe duplicarse entre códigos.
 2. **Despliegue Cloudflare Pages y Render.** Registrar rama/commit reales,
    directorio raíz, comando de build, variables requeridas (sin sus valores),
    CORS y ruta de API. Probar en navegador login, recarga, refresh, CSRF y
@@ -35,19 +36,23 @@ aislada no prueba un despliegue ni una placa física.
 6. **OpenAPI.** Completar esquemas de request/response, parámetros, errores y
    permisos; empezar por autenticación, hogares y dispositivos y cotejar con
    controladores y pruebas.
-7. **Carga y observabilidad.** La simulación de clientes virtuales no usa
+7. **Pruebas de componentes del frontend.** Ampliar la cobertura de componentes,
+   rutas, formularios y estados de error visibles. Las pruebas unitarias de
+   lógica y el E2E con API simulada no sustituyen una validación visual en
+   navegador ni prueban servicios externos.
+8. **Carga y observabilidad.** La simulación de clientes virtuales no usa
    usuarios reales ni PostgreSQL. Diseñar un ensayo aislado con cuentas
    ficticias, duración, concurrencia, límites p95, errores, CPU, memoria y pool;
    registrar limpieza y SHA.
-8. **Prueba física móvil/ESP32.** Ejecutar build móvil nativo para BLE y
+9. **Prueba física móvil/ESP32.** Ejecutar build móvil nativo para BLE y
    verificar provisioning, Wi-Fi, MQTT/TLS, telemetría, pérdida de red,
    medición/vigilancia, desvinculación y retorno de BLE. Registrar teléfono,
    Android, firmware, broker y calibración.
-9. **Dependencias.** Volver a ejecutar audit en la rama candidata y registrar
+10. **Dependencias.** Volver a ejecutar audit en la rama candidata y registrar
    paquetes/advisories actuales, alcance y decisión compatible con Expo SDK 57.
    Los conteos del informe de octubre son históricos y no se deben citar como
    estado actual sin nueva ejecución.
-10. **Correo transaccional.** Documentar un envío real con remitente autorizado,
+11. **Correo transaccional.** Documentar un envío real con remitente autorizado,
     variables presentes sin revelar valores, destinatario de prueba, log del
     proveedor y recepción en buzón. Distinguir aceptación HTTP de entrega.
 

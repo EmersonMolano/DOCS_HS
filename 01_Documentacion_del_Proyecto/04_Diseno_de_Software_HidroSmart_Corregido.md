@@ -167,7 +167,7 @@ Así mismo, garantiza la trazabilidad entre los requerimientos definidos  y su i
 
 <strong>Alcance del sistema</strong>
 
-<strong>Hidro Smart es una solución tecnológica compuesta por un medidor inteligente de agua (basado en ESP32) conectado mediante IoT (MQTT local sin TLS; TLS/ACL de producción pendiente) y una aplicación web/móvil responsiva desarrollada con React + Vite. El sistema permite a los usuarios domésticos:</strong>
+<strong>Hidro Smart es una solución tecnológica compuesta por un medidor inteligente de agua (basado en ESP32) conectado mediante MQTT, con perfil Flespi/TLS en el firmware y Mosquitto sin TLS reservado a desarrollo, además de un cliente web React/Vite y un cliente móvil Expo/React Native. El sistema permite a los usuarios domésticos:</strong>
 
 <p> Monitorear el consumo de agua en tiempo real con polling HTTP; WebSockets no verificado.</p>
 <p> Clasificar el consumo por actividades (ducha, lavado, aseo, cocina, etc.).</p>
@@ -342,11 +342,11 @@ Hidro Smart opera en un entorno doméstico conectado.
 
 El flujo principal es el siguiente:
 
-<p>1\. Los medidores inteligentes (ESP32) instalados en la tubería de agua envían datos de caudal y métricas de salud (señal, batería) mediante MQTT local sin TLS; TLS/ACL de producción pendiente al broker Mosquitto local.</p>
+<p>1\. El ESP32 envía datos de caudal por MQTT; Mosquitto local sirve para desarrollo y el perfil externo Flespi usa TLS en 8883. La ACL y el token del entorno deben verificarse.</p>
 <p>2\. El backend (Node.js) recibe las lecturas, las procesa (aplica calibración, calcula costo) y las almacena en PostgreSQL.</p>
 <p>3\. El frontend React/Vite se comunica con el backend mediante API REST; el corte actual refleja datos mediante polling HTTP y no verifica push en tiempo real.[](https://socket.io/)</p>
 <p>4\. El usuario interactúa desde su navegador o dispositivo móvil para ver dashboards, configurar alertas, gestionar metas, activar modo vacaciones, etc.</p>
-<p>5\. El sistema envía notificaciones push (FCM), correos electrónicos y SMS cuando se supera un tope, se detecta una fuga o se responde un ticket.</p>
+<p>5\. El backend integra correos transaccionales con Brevo para los flujos conectados; FCM, SMS y el envío de alertas por correo no deben suponerse activos sin disparadores verificados.</p>
 
 
 
@@ -396,7 +396,7 @@ Se adopta una Arquitectura Hexagonal (Puertos y Adaptadores) con enfoque Domain-
 </tr>
 <tr>
 <td><p><strong>Stateless</strong></p></td>
-<td><p>El backend no almacena estado en memoria local; las sesiones se gestionan con JWT + Redis no verificado (blacklist).</p></td>
+<td><p>La autenticación web usa cookies HttpOnly con CSRF y sesiones JWT; Redis/blacklist no está verificado como parte del stack activo.</p></td>
 <td><p>Permite escalar horizontalmente agregando m&#250;ltiples instancias sin conflictos.</p></td>
 </tr>
 </table>
@@ -432,7 +432,7 @@ Arquitectura en Capas
 <tr>
 <td><p>Capa de Infraestructura</p></td>
 <td><p>Adaptadores concretos: repositorios PostgreSQL, servicios externos (Firebase, AWS SES, Redis no verificado), cliente MQTT.</p></td>
-<td><p>PostgreSQL, Redis no verificado, Bull, AWS SDK, Firebase Admin</p></td>
+<td><p>PostgreSQL como persistencia activa; Redis, Bull, AWS SDK y Firebase Admin son opciones del diseño no verificadas como dependencias activas.</p></td>
 <td><p>Implementa los puertos definidos en la capa de aplicaci&#243;n y dominio (ej. IUserRepository, INotificationService).</p></td>
 </tr>
 <tr>
@@ -474,7 +474,7 @@ Backend → (polling HTTP; WebSockets no verificado + REST) → Frontend React
 
 Frontend React → (configuración) → Backend (API REST)    ↓
 
-Backend → (notificaciones FCM/SMTP) → Usuario (push/email).
+Backend → Brevo API HTTPS → Usuario (correos de flujos conectados); FCM y SMS no verificados.
 
 
 <strong>Flujo de petición HTTP (ej. crear hogar):</strong>
@@ -517,7 +517,7 @@ Guarda en S3 → Notifica al usuario vía FCM
 </tr>
 <tr>
 <td><p><strong>Tiempo real</strong></p></td>
-<td><p>polling HTTP; WebSockets no verificado y MQTT garantizan latencia baja para alertas y monitoreo (&lt; 3 segundos).</p></td>
+<td><p>El cliente usa polling HTTP; no hay medición reproducible que demuestre latencia inferior a 3 segundos.</p></td>
 </tr>
 <tr>
 <td><p><strong>Seguridad</strong></p></td>
@@ -579,7 +579,7 @@ Guarda en S3 → Notifica al usuario vía FCM
 <tr>
 <td><p><strong>Circuit</strong><strong> Breaker</strong></p></td>
 <td><p>Tolerancia a fallos en servicios externos.</p></td>
-<td><p>Envuelve llamadas a Firebase, SMTP y AWS SES con opossum.</p></td>
+<td><p>Patrón propuesto para servicios externos; FCM y AWS SES no se verifican como proveedores activos y el envío actual usa Brevo API HTTPS.</p></td>
 </tr>
 <tr>
 <td><p><strong>Retry</strong><strong>Pattern</strong></p></td>
@@ -1491,7 +1491,7 @@ Reglas Transversales de Seguridad y Operación
 <tr>
 <td><p>34</p></td>
 <td><p>Escalabilidad horizontal</p></td>
-<td><p>El backend es stateless y utiliza JWT + Redis no verificado para la gesti&#243;n de sesiones, permitiendo escalar horizontalmente.</p></td>
+<td><p>Las sesiones web usan cookies HttpOnly y CSRF; Redis no se verifica como servicio activo. La escalabilidad horizontal no se afirma sin pruebas de carga.</p></td>
 </tr>
 </table>
 
@@ -1535,9 +1535,9 @@ El sistema Hidro Smart implementa múltiples capas de seguridad para proteger la
 
 <strong> Autenticación</strong>
 
-El sistema utiliza JWT (JSON Web Tokens) con firma HS256 para la autenticación stateless. Se generan dos tipos de tokens: el Access Token tiene una duración corta de 15 minutos y se almacena en memoria (React) o en una cookie HttpOnly según la configuración. El Refresh Token tiene una duración extendida de 7 días, se almacena en la base de datos (tabla token) y en el cliente (almacenamiento seguro), permitiendo renovar el Access Token sin volver a iniciar sesión.
+La API usa JWT para access y refresh; en la web se transportan mediante cookies HttpOnly y las solicitudes mutables con cookie requieren X-CSRF-Token. Las duraciones y atributos de cookie dependen del entorno y deben leerse de su configuración vigente.
 
-El frontend (React + Vite) utiliza un interceptor de Axios para renovar automáticamente el Access Token cuando expira, sin intervención del usuario. Los tokens pueden ser revocados individualmente (cierre de sesión) o en masa (cambio de contraseña, eliminación de cuenta). Para garantizar la invalidación inmediata, se utiliza Redis no verificado como blacklist para tokens revocados.
+El cliente web renueva la sesión mediante el cliente HTTP documentado y el backend permite revocar sesiones. Redis/blacklist no está verificado como mecanismo activo.
 
 La autenticación de dos factores (2FA) está prevista para versiones futuras, utilizando TOTP vía Google Authenticator o SMS. La estructura de la base de datos ya incluye la tabla user\_mfa para este propósito. Además, se implementa un bloqueo temporal de cuenta durante 15 minutos después de 5 intentos fallidos consecutivos, y el contador se reinicia tras un inicio de sesión exitoso.
 
@@ -1558,9 +1558,9 @@ Se implementa un límite de 100 solicitudes por minuto por usuario (basado en IP
 
 <strong> Protección de datos</strong>
 
-Todas las comunicaciones se realizan mediante HTTP local; HTTPS/TLS productivo pendiente para API y MQTT local sin TLS; TLS/ACL de producción pendiente para la comunicación con los sensores IoT. La base de datos PostgreSQL se cifra a nivel de disco mediante AES-256 y los campos sensibles (contraseñas, tokens) se almacenan hasheados o cifrados.
+La web/API publicada se comunica mediante HTTPS; el perfil externo del ESP32 usa MQTT/TLS con Flespi y el Mosquitto local queda para desarrollo sin TLS. El cifrado en reposo y la configuración de cada proveedor dependen de su servicio y no se afirman sin evidencia.
 
-Para proteger el sistema contra inyección SQL, se utilizan exclusivamente consultas parametrizadas (prepared statements) en todos los repositorios (PostgreSQL). Los tokens JWT en el frontend se almacenan en memoria (React state) o en cookies HttpOnly para mayor seguridad contra ataques XSS.
+El frontend web usa cookies HttpOnly para la sesión y CSRF en operaciones mutables; Bearer se conserva como compatibilidad. La protección frente a inyección y el almacenamiento de credenciales se detallan en la documentación vigente del backend.
 
 Las copias de seguridad se realizan automáticamente a diario, se cifran con AES-256 y se almacenan en almacenamiento externo no verificado con acceso restringido. El sistema cumple con la Ley 1581 de 2012 (protección de datos personales en Colombia), donde el usuario debe dar consentimiento explícito (user\_consent) y puede ejercer sus derechos ARCO (acceso, rectificación, cancelación, oposición, portabilidad) a través del módulo correspondiente.
 
@@ -1582,18 +1582,18 @@ Las tareas que pueden fallar (envío de emails, notificaciones push, generación
 
 <strong>9.7 Seguridad en el </strong><strong>frontend</strong><strong> (</strong><strong>React</strong><strong> + Vite)</strong>
 
-Los tokens JWT se almacenan en memoria (React state) o en cookies HttpOnly para mayor seguridad contra ataques XSS. Si se utilizan cookies, se implementa protección CSRF con tokens de sincronización o usando el atributo SameSite=Strict. Todos los formularios validan las entradas del usuario tanto en el frontend (con react-hook-form + zod) como en el backend (con express-validator). Las entradas del usuario se sanitizan para prevenir XSS (Cross-Site Scripting) usando librerías como DOMPurify en el frontend y validator en el backend. Además, se implementa Content Security Policy (CSP) para restringir la ejecución de scripts no autorizados y la aplicación se sirve siempre a través de HTTPS, redirigiendo automáticamente HTTP a HTTPS.
+La web utiliza cookies HttpOnly y protección CSRF para solicitudes mutables; el atributo SameSite y demás parámetros los define el entorno. Todos los formularios validan las entradas del usuario tanto en el frontend (con react-hook-form + zod) como en el backend (con express-validator). Las entradas del usuario se sanitizan para prevenir XSS (Cross-Site Scripting) usando librerías como DOMPurify en el frontend y validator en el backend. Además, se implementa Content Security Policy (CSP) para restringir la ejecución de scripts no autorizados y la aplicación se sirve siempre a través de HTTPS, redirigiendo automáticamente HTTP a HTTPS.
 
 
 <strong>Resumen de mecanismos por capa</strong>
 
-En el frontend (React + Vite) , la seguridad se aplica mediante almacenamiento seguro de tokens (memoria o cookies HttpOnly), validación de formularios (react-hook-form + zod), sanitización de entradas (DOMPurify), Content Security Policy (CSP) y HTTPS forzado.
+En el cliente web, la sesión usa cookies HttpOnly con CSRF y la aplicación publicada usa HTTPS. Para librerías y controles restantes, consulta las dependencias y configuración del frontend del corte técnico.
 
 En el backend (Node.js) , se utilizan JWT con Access/Refresh tokens, bcrypt (costo 12), middleware de autenticación y roles, rate limiting, Circuit Breaker, Retry Pattern, procesamiento asíncrono con mecanismos asíncronos no verificados, manejo centralizado de errores y logs en log\_error.
 
 En la base de datos (PostgreSQL) , se aplica cifrado en reposo (AES-256), RLS (Row Level Security), consultas parametrizadas (prepared statements), restricciones de integridad (NOT NULL, UNIQUE, CHECK) y backups cifrados diarios.
 
-En la infraestructura, se garantiza HTTP local; HTTPS/TLS productivo pendiente en todas las comunicaciones, MQTT local sin TLS; TLS/ACL de producción pendiente, almacenamiento externo no verificado con acceso restringido para backups y reportes, y Redis no verificado con autenticación para colas y blacklist.
+La infraestructura web publicada usa HTTPS; Mosquitto local no tiene TLS y es exclusivo de desarrollo. El ESP32 ofrece Flespi/TLS; los tokens/ACL remotos, backups y recuperación deben validarse en sus respectivos entornos. Redis no está verificado como servicio activo.
 
 
 
@@ -1700,7 +1700,7 @@ A continuación, se detallan las tecnologías seleccionadas para el desarrollo d
 </tr>
 <tr>
 <td><p>Comunicaci&#243;n IoT</p></td>
-<td><p>MQTT (Mosquitto/MQTT local; cloud no verificado)</p></td>
+<td><p>Mosquitto local para desarrollo; Flespi/TLS como perfil externo del firmware.</p></td>
 <td><p>2.0 / -</p></td>
 <td><p>Protocolo ligero y eficiente para dispositivos de bajo consumo (ESP32). TLS para seguridad.</p></td>
 </tr>
@@ -2589,23 +2589,26 @@ El informe de diseño original se conserva por su amplitud, tablas, decisiones y
 
 Componentes actuales que deben prevalecer
 
-Mosquitto local, backend Express y PostgreSQL/Liquibase.
+Backend Express y PostgreSQL/Liquibase; Mosquitto es local de desarrollo y el perfil externo Flespi usa MQTT/TLS.
 
-Mosquitto local, backend Express y PostgreSQL/Liquibase.
+Cliente web React/Vite y cliente móvil Expo/React Native; el aprovisionamiento BLE depende de una compilación nativa.
 
-React/Vite web; experiencia móvil WebView con puente BLE.
-
-React/Vite web; experiencia móvil WebView con puente BLE.
-
-Topics hidrosmart/devices/{deviceCode}/telemetry, status, config y actuators.
-
-Topics hidrosmart/devices/{deviceCode}/telemetry, status, config y actuators.
-
-Persistencia y deduplicación de lecturas mediante mqttMessageId.
+El contrato del firmware usa hidrosmart/devices/{deviceCode}/telemetry, status y commands. Los topics de actuadores del backend no prueban que haya actuador físico implementado.
 
 Persistencia y deduplicación de lecturas mediante mqttMessageId.
 
 Polling HTTP de 5 segundos para reflejar datos persistidos en la UI.
 
-Polling HTTP de 5 segundos para reflejar datos persistidos en la UI.
+## Corte de implementación PT_HS — 2026-11-03
 
+Este corte técnico complementa el diseño objetivo de las secciones anteriores y evita interpretar tecnologías propuestas como funciones desplegadas. La referencia de código es PT_HS/hu-19-dev, commit 73fc47c; el [resumen técnico vigente](../08_Documentacion_Tecnica_Actualizada/01_Resumen_y_Arquitectura/00_Resumen_del_Sistema.md) especifica las diferencias entre el monorepo y los repositorios separados.
+
+- Web React/Vite y cliente móvil Expo/React Native son clientes distintos.
+- La web usa sesión en cookies HttpOnly y protección CSRF para operaciones mutables; Bearer queda como compatibilidad opcional de API.
+- Brevo se integra por API HTTPS. La respuesta de aceptación no demuestra entrega; solo están activos los disparadores descritos en la guía de correos.
+- Mosquitto es el broker de desarrollo local. El firmware tiene un perfil Flespi/TLS en el puerto 8883; la ACL y el token desplegados deben verificarse en el entorno.
+- El firmware admite varios códigos lógicos preasignados, pero mantiene un código activo por placa y publica cada lectura bajo ese código. hardwareId identifica la placa física.
+- measurementEnabled=false pausa la suma al consumo, mantiene sensor, Wi-Fi, MQTT y telemetría para que el backend evalúe flujo continuo y alertas de fuga. No equivale a apagar la placa.
+- AWS, FCM, Redis/Bull y WebSockets mencionados en el diseño original son propuestas o capacidades no verificadas como activas en este corte.
+
+Los diagramas y requisitos de este documento describen el diseño esperado; el código y la documentación técnica fechada son la referencia del comportamiento implementado.

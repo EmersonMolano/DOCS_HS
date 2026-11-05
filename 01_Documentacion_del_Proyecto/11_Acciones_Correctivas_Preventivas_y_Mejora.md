@@ -57,10 +57,10 @@ Este documento convierte las brechas identificadas en el corte documental en acc
 <tr>
 <td><p>ACP-04</p></td>
 <td><p>Correctiva</p></td>
-<td><p>SMTP/alertas</p></td>
+<td><p>Correo transaccional y alertas</p></td>
 <td><p>Media</p></td>
-<td><p>Credenciales reales no probadas.</p></td>
-<td><p>Configurar ambiente seguro y probar entrega/reintento.</p></td>
+<td><p>Brevo ya está integrado por API HTTPS según PT_HS; falta evidencia de entrega E2E de cada flujo activo y configuración privada del entorno.</p></td>
+<td><p>Verificar remitente y variables en el gestor, probar verificación/recuperación y documentar messageId, entrega o rebote; conectar aparte los disparadores de alertas que falten.</p></td>
 <td><p>Mensaje recibido, log y manejo de error.</p></td>
 </tr>
 <tr>
@@ -122,7 +122,7 @@ Este documento convierte las brechas identificadas en el corte documental en acc
 </tr>
 <tr>
 <td><p>Dependencia externa</p></td>
-<td><p>SMTP, certificados y hardware.</p></td>
+<td><p>Brevo y evidencia de entrega, certificados/ACL MQTT y hardware físico.</p></td>
 <td><p>Definir ambiente, responsable y criterio de aceptaci&#243;n.</p></td>
 </tr>
 <tr>

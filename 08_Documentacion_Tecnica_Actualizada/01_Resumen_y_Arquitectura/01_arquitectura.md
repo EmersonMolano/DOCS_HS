@@ -36,7 +36,10 @@ flowchart LR
 2. Vincula un deviceCode lógico preasignado. El código debe existir en el conjunto de datos de la versión de base de datos usada.
 3. La placa reporta su hardwareId. El backend valida la asociación y transmite el comando correspondiente por MQTT.
 4. Para configurar la red, un cliente BLE compatible entrega la configuración al ESP32; BLE no es el canal de telemetría.
-5. La desvinculación elimina el enlace hogar-dispositivo y solicita reactivar BLE; la retención de Wi-Fi depende del firmware/configuración.
+5. La desvinculación elimina el enlace hogar-dispositivo y solicita reactivar
+   BLE. En el firmware integrado documentado por PT_HS, se conserva la red
+   Wi-Fi en NVS y se borra solo la asociación; valida por separado el firmware
+   de cada repositorio antes de asumir el mismo comportamiento.
 
 ## Flujo de medición y alertas
 
@@ -72,3 +75,9 @@ La opción de pausar la contabilización de consumo no es un interruptor eléctr
 ## Desarrollo local frente a servicios externos
 
 Docker ofrece componentes locales de desarrollo. No se debe confundir la dirección interna de un contenedor con un host accesible desde el ESP32. Para una placa física, el broker/servidor debe ser alcanzable desde su red. Consulta [Operación local](../02_Operacion_y_Despliegue/02_operacion-local.md) y [Despliegue](../02_Operacion_y_Despliegue/03_despliegue.md).
+
+En la configuración local documentada en PT_HS, PostgreSQL y la API se
+publican solo en `localhost`, y el frontend llega a la API a través de Nginx.
+Mosquitto es el broker local de desarrollo; Flespi/TLS es el broker externo
+descrito para producción. Esta topología documentada no confirma por sí sola
+el estado de los servicios desplegados.

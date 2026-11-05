@@ -116,8 +116,8 @@ No existe en el material revisado una prueba completa de backup/restore; queda c
 </tr>
 <tr>
 <td><p>MQTT TLS/ACL</p></td>
-<td><p>Pendiente; local an&#243;nimo sin TLS.</p></td>
-<td><p>Configurar certificados, ACL, autenticaci&#243;n y rotaci&#243;n.</p></td>
+<td><p>El firmware tiene perfil externo Flespi/TLS; Mosquitto local sigue sin TLS para desarrollo. ACL y token del entorno deben verificarse.</p></td>
+<td><p>Verificar ACL de m&#237;nimo privilegio, token individual por placa y token separado para backend; no exponer Mosquitto local.</p></td>
 </tr>
 <tr>
 <td><p>Secretos</p></td>
@@ -130,9 +130,9 @@ No existe en el material revisado una prueba completa de backup/restore; queda c
 <td><p>Probar backup, restore y RPO/RTO.</p></td>
 </tr>
 <tr>
-<td><p>SMTP</p></td>
-<td><p>Credenciales reales no verificadas.</p></td>
-<td><p>Configurar y probar correo/alertas.</p></td>
+<td><p>Correo transaccional Brevo</p></td>
+<td><p>Integraci&#243;n por API HTTPS documentada; estado de variables privadas y entrega real no se deduce del repositorio.</p></td>
+<td><p>Probar cada flujo conectado y confirmar aceptaci&#243;n/entrega en Brevo; no asumir alertas por correo sin disparador.</p></td>
 </tr>
 <tr>
 <td><p>Observabilidad</p></td>

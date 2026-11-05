@@ -13,7 +13,7 @@ código se inspeccionó y separa esa evidencia de las pruebas fechadas anteriore
 | BK_HS separado | hu-15-dev | 9db5040 |
 | FT_HS separado | hu-16-staging | 18d26e3 |
 | Firmaware_HS separado | hu-03-dev | 5ec5013 |
-| DOCS_HS | main | 18000cb, HEAD base; cambios de documentación locales sin commit |
+| DOCS_HS | main | eab6c78, base consultada antes de esta sincronización documental |
 
 Los componentes separados y el monorepo están en ramas/revisiones distintas.
 No se debe presentar esa combinación como una única versión liberada.
@@ -34,7 +34,7 @@ Estas son observaciones estáticas de los archivos, no pruebas de despliegue o d
 
 1. El DML del checkout separado BD_HS/hu-23-dev reserva tres códigos lógicos.
 2. El PT_HS/hu-19-dev integrado contiene cuatro códigos en firmware y SQL. El firmware permite elegir un código activo, suscribirse a los topics de comando de los códigos y publica cada lectura solamente bajo el código activo. Esto no crea cuatro lecturas independientes ni cuatro sensores físicos.
-3. La base de datos integrada y el repositorio BD_HS separado no son el mismo checkout. Antes de instalar el firmware o migrar el entorno, alinear qué conjunto de códigos se aceptará.
+3. La base de datos integrada y el repositorio BD_HS separado no son el mismo checkout. El firmware integrado publica cada lectura con un solo código activo; no representa cuatro sensores simultáneos. Antes de instalar una combinación de ramas, alinear y verificar los códigos aceptados por SQL, API, firmware y ACL.
 4. Firmaware_HS/hu-03-dev no debe suponerse idéntico al firmware integrado. Verifica su commit y configuración TLS antes de programar una placa.
 5. FT_HS y BK_HS separados tampoco comparten las ramas del monorepo; verifica qué commit consume Cloudflare/Render antes de atribuirles funciones descritas aquí.
 
@@ -54,10 +54,12 @@ El informe previo en este repositorio registra resultados de pruebas del **18 de
 
 ## Siguiente orden recomendado
 
-1. Alinear los IDs aceptados por SQL, API, firmware y ACL; definir si el producto usa una placa/ID activo o sensores independientes.
+1. Alinear los IDs aceptados por SQL, API, firmware y ACL entre ramas. El comportamiento documentado en PT_HS es un código activo por placa y una publicación por lectura; cualquier despliegue multi-placa requiere códigos distintos y pruebas de asociación independientes.
 2. Comparar y promover las ramas de componentes a un conjunto coherente.
 3. Verificar configuración y ejecución remota de Pages, Render, Neon, Brevo y Flespi sin revelar secretos.
-4. Ejecutar pruebas autenticadas de navegador por rol y pruebas físicas del ESP32.
+4. Ampliar las pruebas de componentes y estados visibles del frontend; ejecutar
+   también pruebas autenticadas de navegador por rol y pruebas físicas del
+   ESP32.
 5. Repetir audit y suites en los commits candidatos y registrar SHA, entorno, comandos y resultados.
 
 Consulta [pendientes y evidencias](02_pendientes-documentacion.md) para los criterios de cierre.

@@ -181,7 +181,7 @@ Diseñar e implementar una solución tecnológica compuesta por un <strong>medid
 <p>● Gestión de metas de ahorro, presupuestos mensuales y configuración del modo vacaciones.</p>
 <p>● Administración del historial de conectividad de los dispositivos IoT para facilitar tareas de monitoreo y diagnóstico.</p>
 <p>● Implementación de un sistema de soporte técnico basado en tickets para el reporte y seguimiento de incidencias.</p>
-<p>● Desarrollo del backend utilizando Node.js y Express, con PostgreSQL como sistema gestor de bases de datos. La mensajería IoT se implementa mediante MQTT/Mosquitto; Redis y Firebase Cloud Messaging no están verificados en el corte actual.</p>
+<p>● Desarrollo del backend utilizando Node.js y Express, con PostgreSQL como sistema gestor de bases de datos. La mensajería IoT usa MQTT: Mosquitto es el broker local y el firmware ofrece un perfil externo Flespi/TLS; Redis y Firebase Cloud Messaging no están verificados en el corte actual.</p>
 <p>● Implementación de una arquitectura modular por capas y componentes integrados, utilizando Arquitectura Hexagonal (Ports and Adapters) para el backend y Arquitectura Basada en Componentes (Component-Based Architecture) para el frontend desarrollado con React + Vite.</p>
 <p>● Comunicación entre los diferentes componentes del sistema mediante API REST, polling HTTP de 5 segundos en el cliente actual (WebSockets no verificado) y el protocolo MQTT, garantizando comunicación eficiente; la interfaz actualiza periódicamente los datos persistidos.</p>
 <p>● Diseño del sistema bajo principios de escalabilidad, mantenibilidad, seguridad, disponibilidad y facilidad de integración con futuros servicios.  
@@ -416,14 +416,14 @@ El proyecto busca integrar tecnología y conciencia ambiental, ofreciendo una so
 
 #  Descripción General.
 
-<strong>Hidro Smart es una aplicación móvil conectada a dispositivos IoT de medición inteligente. Su función principal es recopilar datos de consumo, analizarlos y mostrarlos mediante una interfaz amigable e intuitiva.El sistema se compone de:</strong>
+<strong>HidroSmart es una plataforma de monitoreo de agua conectada a dispositivos IoT. Sus clientes web y móvil permiten consultar y gestionar hogares, dispositivos y consumo; el sistema recopila lecturas, las procesa y las presenta a los usuarios. El sistema se compone de:</strong>
 
 <p>● Un medidor inteligente (ESP32) que registra el caudal de agua y métricas de salud (señal, batería, voltaje, temperatura)
   
 </p>
-<p>● Una API IoT (MQTT local sin TLS en el corte actual (TLS/ACL requerido en producción)) para comunicación segura entre dispositivo y servidor.</p>
+<p>● Una integración IoT MQTT: Mosquitto local se limita a desarrollo y el firmware dispone de un perfil externo Flespi/TLS; el token y la ACL remotos deben validarse por ambiente.</p>
 <p>● Un backend en Node.js que procesa la lógica de negocio, autenticación, alertas y notificaciones.</p>
-<p>● Una cliente web y experiencia móvil basada en WebView (React/Vite web; Expo/React Native con WebView y puente BLE para móvil) para la visualización de información, generación de reportes, configuración de metas y gestión de soporte.</p>
+<p>● Un cliente web React/Vite y un cliente móvil Expo/React Native, con aprovisionamiento BLE móvil que requiere compilación nativa, para visualizar información, generar reportes, configurar metas y gestionar soporte.</p>
 <p>● Una base de datos PostgreSQL con políticas de seguridad a nivel de fila (RLS).
   
 </p>
@@ -583,11 +583,11 @@ La aplicación contará con una interfaz web moderna, intuitiva, responsiva y de
 <strong>Broker MQTT</strong>
 
 <p>● <strong>Eclipse Mosquitto (desarrollo).</strong></p>
-<p>● <strong>Broker MQTT local; TLS y ACL de producción pendientes.</strong></p>
+<p>● <strong>Mosquitto para desarrollo local y perfil de firmware Flespi/TLS para broker externo; verificar credenciales y ACL del entorno.</strong></p>
 <strong>Procesamiento Asíncrono</strong>
 
-<p>● <strong>Redis.</strong></p>
-<p>● <strong>Bull.</strong></p>
+<p>● <strong>Redis (alternativa propuesta, no verificada como servicio activo).</strong></p>
+<p>● <strong>Bull (alternativa propuesta, no verificada como servicio activo).</strong></p>
 <strong>Notificaciones</strong>
 
 <p>● <strong>servicio externo de notificaciones (FCM, no verificado).</strong></p>
@@ -603,37 +603,37 @@ La aplicación contará con una interfaz web moderna, intuitiva, responsiva y de
 
 <strong>API REST (HTTPS)</strong>
 
-<strong>Permite la comunicación entre la aplicación web desarrollada con React + Vite y el backend mediante conexiones seguras HTTPS. La autenticación se realizará utilizando JWT (JSON Web Token) en el encabezado:</strong>
+<strong>La aplicación web se comunica con la API mediante HTTPS. El navegador usa cookies HttpOnly para la sesión y X-CSRF-Token en solicitudes mutables. La API conserva compatibilidad con JWT Bearer para clientes autorizados cuando esa modalidad está habilitada.</strong>
 
-<strong>Authorization: Bearer &lt;token&gt;</strong>
+<strong>Authorization: Bearer &lt;token&gt; (compatibilidad para clientes autorizados cuando está habilitada)</strong>
 
 <strong>polling HTTP de 5 segundos en el cliente actual; WSS no verificado</strong>
 
-<strong>Se utilizarán conexiones WebSocket seguras para actualizar en tiempo real el Dashboard, las alertas y el estado de los dispositivos IoT sin necesidad de recargar la aplicación.</strong>
+<strong>WebSocket seguro queda como requisito/evolución; el cliente actual actualiza la interfaz mediante polling HTTP y no se afirma push activo.</strong>
 
-<strong>MQTT local sin TLS en el corte actual (TLS/ACL requerido en producción)</strong>
+<strong>Flespi/TLS es el perfil externo del ESP32; Mosquitto local sin TLS queda limitado a desarrollo.</strong>
 
-<strong>El microcontrolador ESP32 enviará la telemetría al broker MQTT mediante conexiones seguras TLS (puerto 8883).</strong>
+<strong>El firmware dispone de un perfil Flespi que usa MQTT/TLS en el puerto 8883 y valida el certificado CA. La vigencia del token y los permisos ACL deben comprobarse por entorno.</strong>
 
 <strong>Los principales tópicos utilizados serán:</strong>
 
-<p>● <strong>hidrosmart/devices/{device\_id}/telemetry – Lecturas de consumo de agua y métricas del dispositivo.</strong></p>
-<p>● <strong>hidrosmart/devices/{device\_id}/status – Estado de conexión, disponibilidad y versión del firmware.</strong></p>
-<p>● <strong>hidrosmart/devices/{device\_id}/config – Configuración remota y actualización de parámetros del dispositivo.</strong></p>
+<p>● <strong>hidrosmart/devices/{deviceCode}/telemetry – Lecturas de consumo de agua y métricas del dispositivo.</strong></p>
+<p>● <strong>hidrosmart/devices/{deviceCode}/status – Estado de conexión, disponibilidad y versión del firmware.</strong></p>
+<p>● <strong>hidrosmart/devices/{deviceCode}/commands – Comandos dirigidos al dispositivo, incluido el estado de medición.</strong></p>
 <p>● </p>
 <strong>servicio externo de notificaciones (FCM, no verificado)</strong>
 
-<strong>Servicio utilizado para el envío de notificaciones push desde el backend hacia los usuarios registrados cuando se detecten eventos importantes, como consumos excesivos, fugas o incidencias.</strong>
+<strong>FCM aparece como alternativa futura no verificada; los correos transaccionales conectados usan Brevo. No se asumen alertas por email/push sin un disparador activo.</strong>
 
-<strong>Servicio SMTP</strong>
+<strong>Correo transaccional mediante Brevo (API HTTPS)</strong>
 
 
-<strong>Utilizado para el envío de correos electrónicos relacionados con recuperación de contraseña, confirmación de registro, notificaciones de soporte y alertas del sistema.</strong>
+<strong>La integración usa la API HTTPS de Brevo para los flujos de correo conectados. La entrega debe confirmarse en Brevo; las plantillas de alertas sin disparador activo no se consideran envíos implementados.</strong>
 
 <strong>Redis (TCP)</strong>
 
 
-<strong>Se utilizará Redis como mecanismo de comunicación para el procesamiento de colas mediante Bull, permitiendo ejecutar tareas asíncronas como generación de reportes, envío de notificaciones y procesamiento de eventos sin afectar el rendimiento del sistema.</strong>
+<strong>Redis/Bull se conservan como propuesta de procesamiento asíncrono y no deben describirse como servicios activos en el corte técnico 2026-11-03.</strong>
 
 
 
@@ -2077,7 +2077,7 @@ Requerimientos Funcionales
 </tr>
 <tr>
 <td><p>Descripci&#243;n</p></td>
-<td><p>Muestra gr&#225;ficos actualizados autom&#225;ticamente con datos de consumo en tiempo real mediante polling HTTP de 5 segundos en el cliente actual (WebSockets no verificado) (WebSocket push no verificado).</p></td>
+<td><p>Muestra gr&#225;ficos actualizados mediante polling HTTP en el cliente actual; WebSocket push no est&#225; verificado.</p></td>
 </tr>
 <tr>
 <td><p>Entradas</p></td>
@@ -2525,7 +2525,7 @@ Requerimientos Funcionales
 <strong>RNF5. Seguridad</strong>
 
 <p>● <strong>RNF5.1 Control de acceso</strong></p>
-<p>● <strong>RNF5.2 Autenticación segura (Actualizado: JWT + Redis)</strong></p>
+<p>● <strong>RNF5.2 Autenticación segura (cookies HttpOnly, CSRF y sesiones JWT; Redis no verificado)</strong></p>
 <p>● <strong>RNF5.3 Cifrado de datos</strong></p>
 <p>● <strong>RNF5.4 Copias de seguridad</strong></p>
 <strong>RNF6. Gestión y Operación</strong>
@@ -4104,7 +4104,7 @@ Este anexo conserva los requisitos y casos de uso del SRS original, pero estable
 <tr>
 <td><p>Dispositivos y telemetr&#237;a</p></td>
 <td><p>Implementado; asociaci&#243;n por c&#243;digo y flujo MQTT documentados.</p></td>
-<td><p>Se actualiza a topics/deviceCode reales y deduplicaci&#243;n por mqttMessageId.</p></td>
+<td><p>Topics reales por deviceCode y deduplicaci&#243;n por mqttMessageId; firmware mantiene un c&#243;digo l&#243;gico activo por placa y measurementEnabled pausa la suma sin detener telemetr&#237;a.</p></td>
 </tr>
 <tr>
 <td><p>WebSockets / tiempo real</p></td>
@@ -4117,9 +4117,7 @@ Este anexo conserva los requisitos y casos de uso del SRS original, pero estable
 <td><p>Se conservan como alternativas o antecedentes, no como dependencias implementadas.</p></td>
 </tr>
 <tr>
-<td><p>MQTT seguro de producci&#243;n</p></td>
-<td><p>Pendiente.</p></td>
-<td><p>Local: Mosquitto sin TLS/ACL; producci&#243;n requiere autenticaci&#243;n, certificados y ACL.</p></td>
+<td><p>MQTT seguro de producci&#243;n</p></td><td><p>El firmware incluye perfil Flespi/TLS; ACL y token del entorno necesitan evidencia operativa.</p></td><td><p>Local: Mosquitto sin TLS para desarrollo. Externo: Flespi/TLS; verificar credenciales y ACL por dispositivo.</p></td>
 </tr>
 <tr>
 <td><p>Calibraci&#243;n y exactitud metrol&#243;gica</p></td>
@@ -4128,7 +4126,7 @@ Este anexo conserva los requisitos y casos de uso del SRS original, pero estable
 </tr>
 <tr>
 <td><p>Reportes PDF/Excel y notificaciones</p></td>
-<td><p>M&#243;dulos/rutas documentados; operaci&#243;n completa y SMTP real no comprobados.</p></td>
+<td><p>Integraci&#243;n Brevo documentada; la aceptaci&#243;n HTTP no prueba entrega y las alertas sin disparador siguen pendientes.</p></td>
 <td><p>Se conserva como requisito funcional condicionado a pruebas y configuraci&#243;n.</p></td>
 </tr>
 <tr>

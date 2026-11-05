@@ -83,7 +83,7 @@ Calibración con volumen patrón y análisis de error.
 
 Prueba automatizada de backup y restauración.
 
-SMTP real y entrega de notificaciones.
+Entrega integral de correos transaccionales (Brevo) y conexión de disparadores de notificación.
 
 E2E, accesibilidad y validación en dispositivos móviles.
 
@@ -97,7 +97,7 @@ HidroSmart cuenta con una base técnica coherente para monitoreo de consumo: dis
 
 # Referencias
 
-PT\_HS, README.md y docker-compose.yml, corte de rama hu-11-dev, commit b54732e.
+Resultados del artículo: PT\_HS, README.md y docker-compose.yml, rama hu-11-dev, commit b54732e (corte histórico). Estado posterior de implementación: PT\_HS/hu-19-dev, commit 73fc47c; consultar documentación técnica vigente.
 
 PT\_HS/docs/estado-verificado-2026-09-26.md.
 
@@ -110,3 +110,7 @@ Reporte Proyecto Formativo – 2678382 – DESARROLLO DE SOFTWARE ORIENTADO A SE
 <strong>Nota de control documental. </strong>El artículo usa únicamente resultados y cifras presentes en la evidencia revisada. No atribuye métricas de rendimiento, exactitud o impacto de ahorro que no estén medidas.
 
 <!-- footer: HidroSmart | DOC-12 | Versión documental consolidada 1.0 | Página PAGE -->
+
+## Nota de actualización — 2026-11-03
+
+Los resultados y métricas de este artículo corresponden al corte histórico de 2026-09/10 y no se recalcularon. En PT_HS hu-19-dev (73fc47c) el envío transaccional se integra con Brevo por API HTTPS y el firmware documenta el perfil MQTT/TLS de Flespi. La entrega integral de correos, la validación de ACL en el servicio remoto, la calibración y las pruebas físicas de aceptación siguen requiriendo evidencia; por ello esta nota no cambia los resultados experimentales del artículo. Consulta el [estado técnico vigente](../08_Documentacion_Tecnica_Actualizada/08_Estado_y_Mantenimiento/01_estado-actual.md).

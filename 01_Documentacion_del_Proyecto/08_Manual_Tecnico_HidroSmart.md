@@ -31,7 +31,7 @@ Esta ampliación desarrolla el manual a partir del repositorio PT\_HS y de sus d
 <td><p>Backend Node/Express, API, dominio, infraestructura, MQTT, jobs y pruebas.</p></td>
 </tr>
 <tr>
-<td><p>FT_HS/frontend</p></td>
+<td><p>FT_HS/Web y FT_HS/frontend</p></td>
 <td><p>React/Vite/TypeScript, features, UI, m&#243;vil WebView y puente BLE.</p></td>
 </tr>
 <tr>
@@ -68,14 +68,14 @@ Esta ampliación desarrolla el manual a partir del repositorio PT\_HS y de sus d
 <td><p>ONLINE/OFFLINE/ERROR, hardwareId, provisioningState, firmwareVersion, red y timestamp.</p></td>
 </tr>
 <tr>
-<td><p>Backend → ESP32 /config</p></td>
+<td><p>Backend → ESP32 /commands</p></td>
 <td><p>QoS 1 seg&#250;n uso</p></td>
-<td><p>Configuraci&#243;n soportada por contrato.</p></td>
+<td><p>Comandos admitidos por el contrato, incluido el modo de medici&#243;n.</p></td>
 </tr>
 <tr>
 <td><p>Backend → actuador /command</p></td>
 <td><p>QoS 1 / no retain</p></td>
-<td><p>Comando de v&#225;lvula o bomba.</p></td>
+<td><p>Topic previsto por el backend; no forma parte del contrato vigente del firmware ni prueba una v&#225;lvula o bomba f&#237;sica instalada.</p></td>
 </tr>
 <tr>
 <td><p>ESP32 → actuador /status</p></td>
@@ -101,7 +101,7 @@ Los errores deben ser observables y no deben producir lecturas parciales.
 
 # 4. API y seguridad
 
-La API usa el prefijo /api/v1 y agrupa autenticación, hogares, dispositivos, consumo, usuarios, tarifas, alertas, metas, vacaciones, roles, soporte, auditoría, privacidad, reportes y recomendaciones. Las rutas protegidas requieren Bearer/JWT; la renovación se limita al flujo descrito en la documentación del backend. Los nombres exactos de endpoints y payloads deben consultarse en el código antes de integrar un cliente nuevo.
+La API usa el prefijo /api/v1 y agrupa autenticación, hogares, dispositivos, consumo, usuarios, tarifas, alertas, metas, vacaciones, roles, soporte, auditoría, privacidad, reportes y recomendaciones. En la web, la sesión usa cookies HttpOnly y las solicitudes mutables incluyen X-CSRF-Token; el backend conserva Bearer/JWT para clientes autorizados cuando está habilitado. La renovación se limita al flujo descrito en la documentación del backend. Los nombres exactos de endpoints y payloads deben consultarse en el código antes de integrar un cliente nuevo.
 
 # 5. Firmware
 
@@ -130,11 +130,11 @@ No introducir credenciales Wi-Fi/MQTT en el repositorio.
 </tr>
 <tr>
 <td><p>Login falla</p></td>
-<td><p>Estado de verificaci&#243;n, JWT/refresh, variables y logs backend.</p></td>
+<td><p>Estado de verificaci&#243;n, cookies de sesi&#243;n, token CSRF, renovaci&#243;n, configuraci&#243;n y logs del backend.</p></td>
 </tr>
 <tr>
 <td><p>No llegan lecturas</p></td>
-<td><p>Broker 1883, t&#243;pico/deviceCode, payload, suscriptor, permisos BD y deduplicaci&#243;n.</p></td>
+<td><p>MQTT_BROKER_URL y puerto activo (Mosquitto local o Flespi TLS 8883), topic y deviceCode, payload, suscriptor, permisos BD y deduplicaci&#243;n.</p></td>
 </tr>
 <tr>
 <td><p>ESP32 offline</p></td>
@@ -146,7 +146,7 @@ No introducir credenciales Wi-Fi/MQTT en el repositorio.
 </tr>
 <tr>
 <td><p>Correo no llega</p></td>
-<td><p>SMTP y credenciales; actualmente no se considera comprobado.</p></td>
+<td><p>Revisar BREVO_API_KEY, BREVO_FROM_EMAIL y BREVO_FROM_NAME en el entorno; confirmar el evento y su estado en Brevo. No registrar secretos.</p></td>
 </tr>
 </table>
 
@@ -179,9 +179,9 @@ El sistema no es un único ejecutable: se compone de módulos coordinados. El re
 <td><p>src/app.js, core/application, core/domain, core/infrastructure, src/mqtt y tests.</p></td>
 </tr>
 <tr>
-<td><p>FT_HS/frontend</p></td>
-<td><p>Cliente React/Vite, TypeScript, rutas, features, WebView m&#243;vil y puente BLE.</p></td>
-<td><p>src/app, src/features, src/mobile, src/shared y scripts de preparaci&#243;n m&#243;vil.</p></td>
+<td><p>FT_HS/Web y FT_HS/frontend</p></td>
+<td><p>Web React/Vite y cliente Expo/React Native con WebView y puente BLE nativo.</p></td>
+<td><p>Web/src; frontend/src/mobile, frontend/src/shared y scripts m&#243;viles. Expo Go no incluye BLE nativo.</p></td>
 </tr>
 <tr>
 <td><p>firmware</p></td>
@@ -191,7 +191,7 @@ El sistema no es un único ejecutable: se compone de módulos coordinados. El re
 <tr>
 <td><p>docs</p></td>
 <td><p>Estado, integraci&#243;n, IoT, ejecuci&#243;n local y validaci&#243;n transversal.</p></td>
-<td><p>estado-verificado-2026-09-26.md y gu&#237;as de ejecuci&#243;n.</p></td>
+<td><p>README, contrato MQTT, gu&#237;as de integraci&#243;n y cortes de estado fechados.</p></td>
 </tr>
 </table>
 
@@ -310,13 +310,13 @@ La API se monta bajo /api/v1. El health público se consulta en /health y el bac
 
 Una cuenta nueva queda en estado Pending hasta consumir el token de correo.
 
-El login entrega access/refresh tokens; el Compose define por defecto 15 minutos para JWT y 30 días para refresh, salvo que el entorno los cambie.
+El login establece cookies HttpOnly de access y refresh; sus duraciones dependen de la configuración validada del entorno.
 
-Las rutas protegidas reciben Bearer; el cliente HTTP intenta una renovación ante 401 una sola vez.
+El navegador envía las cookies de sesión; las peticiones mutables incluyen X-CSRF-Token. Bearer se mantiene como compatibilidad cuando se habilita. El cliente HTTP intenta una renovación ante 401 una sola vez.
 
 Logout, revocación, cambio de contraseña y cierre de sesiones invalidan el acceso conforme al flujo del backend.
 
-No se deben registrar tokens, contraseñas, SMTP\_PASSWORD ni claves JWT en tickets o documentos.
+No se deben registrar tokens, contraseñas, BREVO\_API\_KEY, claves JWT ni credenciales Wi-Fi/MQTT en tickets o documentos.
 
 # 11. Base de datos y migraciones
 
@@ -390,22 +390,22 @@ Los roles técnicos documentados son hidro\_smart\_admin, hidro\_smart\_liquibas
 <td><p>ONLINE, OFFLINE o ERROR; hardwareId, provisioningState, firmwareVersion, red y timestamp.</p></td>
 </tr>
 <tr>
-<td><p>hidrosmart/devices/{deviceCode}/config</p></td>
+<td><p>hidrosmart/devices/{deviceCode}/commands</p></td>
 <td><p>backend → ESP32</p></td>
 <td><p>QoS 1 seg&#250;n uso</p></td>
-<td><p>Configuraci&#243;n soportada por el contrato.</p></td>
+<td><p>Comandos del dispositivo; el contrato del ESP32 incluye confirm_link, unlink, enable_ble, disable_ble y set_measurement.</p></td>
 </tr>
 <tr>
 <td><p>.../actuators/{valve|pump}/command</p></td>
 <td><p>backend → ESP32</p></td>
 <td><p>QoS 1 / no retain</p></td>
-<td><p>Comando de v&#225;lvula o bomba.</p></td>
+<td><p>Topic previsto por el backend; no forma parte del contrato vigente del firmware ni prueba una v&#225;lvula o bomba f&#237;sica instalada.</p></td>
 </tr>
 <tr>
 <td><p>.../actuators/{valve|pump}/status</p></td>
 <td><p>ESP32 → backend</p></td>
 <td><p>QoS 1 / retain</p></td>
-<td><p>Estado y ACK del actuador.</p></td>
+<td><p>Topic previsto por el backend; la respuesta de hardware requiere una prueba f&#237;sica independiente.</p></td>
 </tr>
 </table>
 
@@ -430,7 +430,7 @@ El dato documentado usa consumption\_liters NUMERIC(14,3) y volumen en m³ NUMER
 
 # 13. Firmware y BLE
 
-El firmware usa PlatformIO, entorno esp32dev, framework Arduino y monitor a 115200. Las dependencias declaradas son PubSubClient, ArduinoJson y NimBLE-Arduino. El sensor YF-S201 se observa conectado al GPIO 27 en el corte técnico; la adaptación eléctrica y la calibración con volumen conocido siguen siendo responsabilidades de la validación física.
+El firmware usa PlatformIO, entorno esp32dev para pruebas locales y esp32dev-flespi para MQTT/TLS, framework Arduino y monitor a 115200. Las dependencias declaradas son PubSubClient, ArduinoJson y NimBLE-Arduino. El sensor YF-S201 se observa conectado al GPIO 27 en el corte técnico; la adaptación eléctrica y la calibración con volumen conocido siguen siendo responsabilidades de la validación física.
 
 <table>
 <tr>
@@ -455,12 +455,12 @@ El firmware usa PlatformIO, entorno esp32dev, framework Arduino y monitor a 1152
 </tr>
 <tr>
 <td><p>Identidad</p></td>
-<td><p>hardwareId estable derivado del eFuse; deviceCode l&#243;gico opcional seg&#250;n contrato.</p></td>
+<td><p>hardwareId estable derivado del eFuse; el firmware selecciona un solo deviceCode l&#243;gico activo por placa entre los c&#243;digos configurados.</p></td>
 </tr>
 </table>
 
 
-El JSON de configuración documentado es: {"ssid":"NOMBRE\_DE\_LA\_RED","password":"CLAVE\_WIFI","deviceCode":"ESP32-001"}. mqttHost y mqttPort pueden enviarse para que el firmware guarde el broker. El puente móvil usa react-native-ble-plx y requiere development build; Expo Go no basta para BLE nativo.
+El JSON de configuración incluye ssid, password, mqttHost, mqttPort y un deviceCode lógico preasignado; no se deben usar códigos inventados ni registrar contraseñas en documentación. La placa tiene un único código lógico activo por vez. El puente móvil usa react-native-ble-plx y requiere development build; Expo Go no incluye BLE nativo.
 
 # 14. Diagnóstico técnico por síntoma
 
@@ -516,8 +516,21 @@ Se documentan dos dispositivos y 3.245 lecturas persistidas al cierre de ese cor
 
 La prueba física registra seis mensajes en reposo y cinco con agua circulando para HS-141F47470968.
 
-La calibración con volumen conocido, MQTT productivo con TLS/ACL, backup/restore, SMTP real, accesibilidad, E2E y push WebSocket no están cerrados.
+Al corte histórico 2026-09-26 quedaban pendientes calibración con volumen conocido, MQTT productivo, backup/restore, correo real, accesibilidad, E2E y push WebSocket. El estado posterior se registra en la actualización fechada a continuación.
 
 <strong>Control de evidencia. </strong>Fuentes: PT\_HS/README.md, docker-compose.yml, docs/estado-verificado-2026-09-26.md, BK\_HS/docs/00-estado-actual.md, BK\_HS/docs/14-mqtt-protocol.md, BD\_HS/docs/README.md, firmware/README.md, platformio.ini y package.json. La fecha de corte es parte del contenido técnico.
 
 <!-- footer: HidroSmart | DOC-08 | Versión documental consolidada 1.0 | Página PAGE -->
+
+## Actualización técnica — 2026-11-03
+
+La fuente de esta actualización es PT_HS/hu-19-dev (73fc47c), no una lectura de las variables privadas o del panel del proveedor.
+
+- Autenticación web: cookies HttpOnly y CSRF; Bearer es compatibilidad opcional.
+- Correo: Brevo por API HTTPS, con BREVO_API_KEY, BREVO_FROM_EMAIL y BREVO_FROM_NAME. La respuesta HTTP aceptada no confirma entrega.
+- MQTT ESP32: topics del contrato de firmware: hidrosmart/devices/{deviceCode}/telemetry, /status y /commands. Flespi/TLS usa puerto 8883; Mosquitto local queda para desarrollo. Verifica ACL y tokens en el ambiente.
+- Identidad: deviceCode es lógico; hardwareId identifica la placa. El firmware elige un único código lógico activo a la vez.
+- Vigilancia de fuga: measurementEnabled=false conserva telemetría de flujo/pulsos y conexión MQTT, pero deja de sumar litros. No es un apagado eléctrico.
+- Límites: el flujo físico reciente, la entrega de todos los correos, la ACL remota y la calibración requieren evidencia del ambiente/dispositivo; no se infieren de que exista código.
+
+Consulta el [contrato MQTT del firmware](../08_Documentacion_Tecnica_Actualizada/06_IoT_y_Firmware/06_Contrato_MQTT.md), la [guía de correos](../08_Documentacion_Tecnica_Actualizada/04_Backend_y_API/08_correos-transaccionales.md) y el [estado actual](../08_Documentacion_Tecnica_Actualizada/08_Estado_y_Mantenimiento/01_estado-actual.md).

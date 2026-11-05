@@ -205,8 +205,8 @@ Los nombres siguientes aparecen en docker-compose.yml o en la documentación del
 </tr>
 <tr>
 <td><p>Correo</p></td>
-<td><p>SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASSWORD, SMTP_FROM</p></td>
-<td><p>Recuperaci&#243;n/notificaciones; credenciales reales no verificadas.</p></td>
+<td><p>BREVO_API_KEY, BREVO_FROM_EMAIL, BREVO_FROM_NAME</p></td>
+<td><p>Correo transaccional por API HTTPS; configura una API key v3 y un remitente verificado en el gestor del entorno. No pegues secretos en el repositorio.</p></td>
 </tr>
 <tr>
 <td><p>Frontend</p></td>

@@ -741,17 +741,9 @@ Flujo autenticación → autorización
 
 Registro crea cuenta pendiente; verificación de correo habilita el ingreso.
 
-Registro crea cuenta pendiente; verificación de correo habilita el ingreso.
-
-Login entrega sesión/JWT; rutas protegidas usan Bearer.
-
-Login entrega sesión/JWT; rutas protegidas usan Bearer.
+El login establece cookies HttpOnly de sesión; las mutaciones requieren X-CSRF-Token. Bearer se conserva como compatibilidad cuando está habilitado.
 
 Refresh intenta renovar una vez ante 401; logout revoca la sesión.
-
-Refresh intenta renovar una vez ante 401; logout revoca la sesión.
-
-Roles y restricciones de hogar/RLS limitan el acceso a datos.
 
 Roles y restricciones de hogar/RLS limitan el acceso a datos.
 

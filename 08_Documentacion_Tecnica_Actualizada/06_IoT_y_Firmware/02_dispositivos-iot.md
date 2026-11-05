@@ -1,6 +1,6 @@
 ﻿# Guía operativa de dispositivos IoT
 
-Última revisión del código: 2026-10-15. Esta guía describe el flujo implementado; no sustituye una prueba física del ESP32.
+Última revisión documental: 2026-11-03, contrastada con el firmware y contrato MQTT integrados en PT_HS/hu-19-dev. Describe el flujo de código; no sustituye una prueba física del ESP32.
 
 ## Identidades: no confundir
 
@@ -9,7 +9,7 @@
 | `code` / `deviceCode` | Identifica el registro lógico y forma los topics MQTT.       | En PostgreSQL y en la configuración privada `firmware/provisioning/config.h`. |
 | `hardwareId`          | Identifica la placa física; el firmware lo deriva del eFuse. | Lo detecta BLE y el frontend lo reclama para el dispositivo lógico.           |
 
-La base de datos incluye tres códigos lógicos reservados en `BD_HS/02_dml/03_upserts/001_preassigned_esp32_device_codes.sql`. No son los `hardwareId` físicos. Para una placa preasignada, configura en `config.h` el código reservado que le corresponde; no reutilices el mismo en dos placas. Si `HIDROSMART_DEVICE_CODE` queda vacío, el firmware usa como código lógico su propio `hardwareId`, que debe existir en la base antes de intentar vincularlo.
+El firmware integrado de PT_HS reconoce cuatro códigos lógicos preasignados: `HS-7A3F91C8D2E4`, `HS-B6E04D79A153`, `HS-2C8A5F01E7B9` y `HS-141F47470968`. Una placa tiene un solo `deviceCode` activo y publica cada lectura una sola vez bajo ese código; se suscribe a los topics `commands` de los cuatro códigos. Esto permite seleccionar el código lógico de la placa, pero no simula cuatro sensores ni genera cuatro lecturas simultáneas. `hardwareId` es la identidad física derivada del eFuse. La rama separada BD_HS/hu-23-dev documenta tres códigos en su upsert; esa diferencia de ramas debe resolverse antes de instalar una versión combinada. Si `HIDROSMART_DEVICE_CODE` queda vacío, el firmware usa como código lógico su `hardwareId`, que debe existir en la base antes de vincularlo.
 
 ## Flujo de primera vinculación
 

@@ -75,7 +75,7 @@ Configurar umbrales de alerta según permisos.
 
 Revisar eventos y recomendaciones.
 
-Si no llega un correo, informar al soporte: el SMTP real no está validado en el corte documental.
+Si no llega un correo de cuenta, revisa spam y contacta soporte. HidroSmart usa Brevo; la respuesta de solicitud no garantiza que el mensaje se haya entregado.
 
 # 7. Interpretar estados
 
@@ -174,7 +174,7 @@ Consumir el enlace de verificación recibido; las cuentas nuevas permanecen Pend
 
 Iniciar sesión con el correo y contraseña registrados.
 
-Si el ambiente no entrega correo, informar el problema al soporte; el SMTP real no está validado en el corte.
+Si no llega el correo de verificación, revisa spam y contacta soporte indicando fecha y dirección enmascarada. El proveedor configurado es Brevo.
 
 ## 10.2 Sesiones y seguridad de acceso
 
@@ -214,7 +214,9 @@ Asociarlo usando device.code, sin inventar un código alternativo.
 
 Verificar que el dispositivo quede relacionado con el hogar esperado.
 
-Editar nombre, ubicación y umbral cuando el usuario tenga permiso.
+Para mover el equipo a otro hogar, usa **Desvincular dispositivo** desde el hogar actual y luego vincula el mismo registro en el hogar destino. Desvincular quita la asociación, pero conserva el registro, el código lógico, las lecturas históricas y las credenciales Wi-Fi guardadas; el firmware vuelve a anunciar BLE. Eliminar el dispositivo es una acción diferente y puede borrar su historial.
+
+Editar nombre, ubicación y umbral cuando el usuario tenga permiso. Al pausar la medición, la placa sigue conectada y enviando flujo/pulsos para vigilar fugas; solo deja de sumar litros al consumo. Reactiva la medición para reanudar el conteo. Esta acción no apaga eléctricamente el ESP32.
 
 Revisar el estado, última conexión, hardwareId y datos de aprovisionamiento que el build muestre.
 
@@ -286,7 +288,7 @@ Consultar la tarifa vigente asociada al hogar antes de interpretar costos.
 
 Revisar reglas, umbrales, eventos e historial de alertas.
 
-Si una alerta requiere correo o push y no aparece, reportarla: las credenciales SMTP y la entrega real no están cerradas en el corte.
+Consulta las alertas dentro de la aplicación. No se debe asumir correo o push para fugas, consumo o metas: sus disparadores no están confirmados como conectados en el corte actual.
 
 # 15. Reportes y recomendaciones
 
@@ -363,7 +365,7 @@ El módulo de soporte documenta catálogos, tickets y respuestas. Al reportar un
 </tr>
 <tr>
 <td><p>No llega correo</p></td>
-<td><p>SMTP o cuenta de prueba puede no estar configurado.</p></td>
+<td><p>Brevo puede aceptar la solicitud sin que el correo llegue; revisa spam y reporta la hora y el flujo usado.</p></td>
 <td><p>Reportar fecha, correo enmascarado y operaci&#243;n realizada.</p></td>
 </tr>
 </table>
@@ -379,7 +381,7 @@ No desconectar la placa durante una actualización o prueba técnica.
 
 No interpretar una lectura sin calibración como medida certificada.
 
-El broker local no tiene TLS/ACL; no usarlo para datos reales fuera de un ambiente controlado.
+Mosquitto local no tiene TLS/ACL y es solo para desarrollo. El perfil externo del ESP32 usa Flespi/TLS; no reutilices tokens ni asumas que la ACL del ambiente está vigente sin comprobarla.
 
 La compatibilidad móvil, accesibilidad y E2E aún requieren verificación adicional.
 

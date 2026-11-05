@@ -13,7 +13,7 @@ HidroSmart reúne clientes web y móvil, API, PostgreSQL, broker MQTT y firmware
 | BK_HS | hu-15-dev · 9db5040 | Backend separado. |
 | FT_HS | hu-16-staging · 18d26e3 | Frontend separado. |
 | Firmaware_HS | hu-03-dev · 5ec5013 | Firmware separado. |
-| DOCS_HS | main · 18000cb | HEAD base del repositorio; esta rectificación documental está sin commit en el árbol local. |
+| DOCS_HS | main · eab6c78 | Base consultada antes de esta sincronización documental. |
 
 Las ramas separadas y el monorepo **no están en una única revisión coordinada**. El repositorio PT_HS contiene la integración más reciente revisada; los repositorios separados tienen ramas y contenidos distintos. Usa las guías de cada componente para conocer su alcance; no asumas que un cambio del monorepo ya llegó a los repositorios separados.
 
